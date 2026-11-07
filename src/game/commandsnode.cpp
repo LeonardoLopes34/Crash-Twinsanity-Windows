@@ -30,6 +30,10 @@
 
 #include <utility>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The commands that work on the agent's object node, its runner and its levels
 
 extern "C"
@@ -819,6 +823,13 @@ void SetBehaviourPriorityCommand::Execute(TimeClock*, BehaviourRunner* runner, B
 void CreateCrateContentsCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLevel*)
 {
     InstanceContext* instance = NodeOf(runner)->owner;
+#ifdef TWIN_NATIVE
+    // Online co-op: a crate broken by the partner's attack leaves its contents to the partner's game (coop/coopgame.cpp)
+    if (Coop::SuppressesCrateContents(instance))
+    {
+        return;
+    }
+#endif
     auto* node = static_cast<AgentNode*>(GetGameNode(&instance->nodes, NodeCrate));
     CreateCrateContents(this, node->agent, instance, runner);
 }

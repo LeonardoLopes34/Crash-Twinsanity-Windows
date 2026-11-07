@@ -303,7 +303,12 @@ void TestBadNetwork()
     Check(hostGo >= 0 && clientGo >= 0, "a cutscene começa nos dois mesmo assim");
     for (int index = 0; index < 20; index++)
     {
-        pair.host.SendWorld({1, static_cast<uint32_t>(index), 0});
+        WorldEvent event;
+        event.kind = 1;
+        event.area = 77;
+        event.id = static_cast<uint32_t>(index);
+        event.position[1] = static_cast<float>(index) * 0.5f;
+        pair.host.SendWorld(event);
     }
 
     int got = 0;
@@ -314,7 +319,8 @@ void TestBadNetwork()
         WorldEvent event;
         while (pair.client.PopWorld(&event))
         {
-            ordered = ordered && event.id == static_cast<uint32_t>(got);
+            ordered = ordered && event.id == static_cast<uint32_t>(got) && event.area == 77 &&
+                      event.position[1] == static_cast<float>(got) * 0.5f;
             got++;
         }
     }

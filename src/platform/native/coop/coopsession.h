@@ -60,11 +60,15 @@ enum class EventKind : uint8_t
     Text = 9,           // a line to show the other player
 };
 
+// A shared world event: what happened (the game's kinds: coopgame.cpp), the area (its chunk's hash), the instance's ID (the game's,
+// 0xFFFFFFFF none), a value and where (to find the instance on the other PC)
 struct WorldEvent
 {
     uint8_t kind = 0;
+    uint32_t area = 0;
     uint32_t id = 0;
     uint32_t value = 0;
+    float position[3] = {0, 0, 0};
 };
 
 // A line for the HUD (coopgame.cpp shows them at the bottom of the screen)

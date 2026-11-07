@@ -18,6 +18,10 @@
 #include "game/rigidbody.h"
 #include "game/shadows.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 extern "C"
 {
     // An instance's model's joint's position (in the world when asked). Whether it has the joint
@@ -485,6 +489,10 @@ void BasicAgent::Touched(InstanceContext*, const Vector4*)
 
 void BasicAgent::Attacked(const AttackEvent* event, InstanceContext* sender)
 {
+#ifdef TWIN_NATIVE
+    // Online co-op: the player's attacks on crates told the partner's game (coop/coopgame.cpp)
+    Coop::AgentAttacked(instance, event->kind, sender);
+#endif
     auto* basicPart = static_cast<BasicAgentPart*>(part);
     if (instance->flags.receivesTriggerSignals && basicPart->bits.invulnerable == 0)
     {

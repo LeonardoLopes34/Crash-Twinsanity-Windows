@@ -483,6 +483,26 @@ void Session::HandleEvent(const uint8_t* data, size_t size, double at)
 {
     Reader reader(data, size);
     auto kind = static_cast<EventKind>(reader.U8());
+    if (kind == EventKind::World)
+    {
+        WorldEvent event;
+        event.kind = reader.U8();
+        event.area = reader.U32();
+        event.id = reader.U32();
+        event.value = reader.U32();
+        for (float& value : event.position)
+        {
+            value = reader.F32();
+        }
+
+        if (reader.Ok())
+        {
+            world.push_back(event);
+        }
+
+        return;
+    }
+
     if (kind == EventKind::Text)
     {
         std::string text = reader.Text();
@@ -558,9 +578,6 @@ void Session::HandleEvent(const uint8_t* data, size_t size, double at)
     case EventKind::Pull:
         pulled = true;
         Notify(partnerName + " puxou você até ele", 3);
-        break;
-    case EventKind::World:
-        world.push_back({static_cast<uint8_t>(a), b, c});
         break;
     default:
         break;
@@ -775,7 +792,27 @@ void Session::PullPartner()
     Notify("Co-op: chamando " + partnerName + "...", 3);
 }
 
-void Session::SendWorld(const WorldEvent& event) { SendEvent(EventKind::World, event.kind, event.id, event.value); }
+void Session::SendWorld(const WorldEvent& event)
+{
+    if (link != Link::Connected)
+    {
+        return;
+    }
+
+    std::vector<uint8_t> message;
+    Writer writer(&message);
+    writer.U8(static_cast<uint8_t>(EventKind::World));
+    writer.U8(event.kind);
+    writer.U32(event.area);
+    writer.U32(event.id);
+    writer.U32(event.value);
+    for (float value : event.position)
+    {
+        writer.F32(value);
+    }
+
+    channel.Queue(message);
+}
 
 bool Session::PopWorld(WorldEvent* event)
 {

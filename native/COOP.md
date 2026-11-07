@@ -49,9 +49,17 @@ boneco não ficar dentro do outro Crash.
 
 | **Mochila de verdade**: quem entra fica invisível (modelo e sombra), sem controle, imune a dano e a itens, e é levado na posição do parceiro com a própria câmera; ao sair, reaparece ao lado. Testada em 2026-11-07 com duas janelas (`TWIN_COOP_TEST_BACKPACK=15,40`: entra aos 15 s de conexão, sai aos 40) | `coop/coopgame.cpp` (`BackpackFrame`), ganchos em `ogi.cpp` e `shadows.cpp` |
 
+| **Caixas**: o ataque do jogador numa caixa vai para o outro PC, onde a mesma caixa (achada pela área, ID e posição) leva o mesmo golpe, dado pelo boneco do parceiro, e quebra pelo próprio script do jogo. O conteúdo dela fica só no PC de quem quebrou. Se o outro jogador estiver longe (o jogo só roda os scripts de perto), o golpe espera até ele chegar a 15 unidades. Testado em 2026-11-07: a caixa do Aku Aku quebrou nos dois PCs | `coop/coopgame.cpp` (`AgentAttacked`, `ApplyWorld`), ganchos em `agents.cpp` e `commandsnode.cpp` |
+| **Frutas**: o contador é compartilhado (cada fruta que um pega soma nos dois), e a fruta do cenário que um pegou some do mundo do outro. Testado: o host pegou 1, o cliente recebeu 1 e a fruta sumiu lá | `WumpaPicked`, gancho em `commandsgame.cpp` |
+
+Testes num PC só: `TWIN_COOP_TEST_CRATE=12` (o host vai até a caixa mais próxima e gira nela), `TWIN_COOP_TEST_PICKUP=12` (o host
+pega a fruta mais próxima), `TWIN_COOP_LOG_CRATES=1` (o estado da caixa 3 s depois, no log).
+
 ## Próximos passos
 
 1. Testar o boneco andando, pulando e girando (precisa de alguém jogando numa das janelas).
+2. Caixas quebradas por explosão (TNT, nitro) quebram nos dois PCs sozinhas, mas soltam frutas nos dois; itens como a máscara
+   aparecem nos dois PCs. Lembrar caixas/frutas de uma área para quando o outro jogador entrar nela depois.
 2. Mostrar na mochila algo nas costas de quem carrega (como a máscara do Mind over Mutant), e dar sombra ao boneco do parceiro.
 3. **Eventos do mundo** pelo host: caixas, Wumpa, máscaras, checkpoints, troca de fase (`Session::SendWorld`).
 4. **Carbon Crash**: recolorir só a instância do P2.

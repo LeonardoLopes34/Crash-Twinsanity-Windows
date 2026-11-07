@@ -25,6 +25,17 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
 // the partner's puppet given the partner's pose. True when it isn't to be drawn (the local player riding in the backpack)
 bool ModelDrawn(ModelNode* node);
 
+// The world shared (crates and wumpa fruit):
+// - an agent attacked (agents.cpp's BasicAgent::Attacked): a crate the local player attacked told the partner's game, which
+//   attacks its own the same way;
+// - a crate's contents about to be made (commandsnode.cpp's CreateCrateContents): true to leave them out (a crate the partner
+//   broke: the partner's game has them);
+// - wumpa fruit about to be added (commandsgame.cpp's PickUpWumpa): told the partner's game (which adds them too and hides the
+//   pickup), true to leave them out (from a crate the partner broke)
+void AgentAttacked(InstanceContext* instance, unsigned kind, InstanceContext* sender);
+bool SuppressesCrateContents(const InstanceContext* crate);
+bool WumpaPicked(InstanceContext* from, unsigned count);
+
 // Whether an instance's shadow isn't cast (shadows.cpp's ShadowNode::Update): the local player riding in the backpack
 bool HidesShadow(const InstanceContext* instance);
 }

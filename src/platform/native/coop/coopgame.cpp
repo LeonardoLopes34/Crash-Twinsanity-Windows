@@ -14,7 +14,12 @@
 #include "native.h"
 
 #include "game/agentlab.h"
+#include "game/agents.h"
 #include "game/animation.h"
+#include "game/characters.h"
+#include "game/collision.h"
+#include "game/oleg.h"
+#include "game/scenery.h"
 #include "game/behaviours.h"
 #include "game/memory.h"
 #include "game/resources.h"
@@ -578,6 +583,400 @@ void RideInBackpack(double now)
     }
 }
 
+// The world shared: crates and wumpa fruit. The kinds of the world events
+enum WorldKind : uint8_t
+{
+    WorldCrateHit = 1, // the player attacked a crate (value: the attack's kind)
+    WorldWumpaPickup = 2, // wumpa fruit picked up from a pickup (value: how many; the pickup hidden on the other PC)
+    WorldWumpa = 3,       // wumpa fruit from anything else (a crate's own count): value
+};
+
+// The crates attacked from the partner's game: the attacks queued here that haven't arrived (not told back), and until when their
+// contents and wumpa fruit are left out
+struct Replayed
+{
+    u32 queued = 0;
+    double queuedAt = 0;
+    double until = 0;
+};
+std::map<const InstanceContext*, Replayed> g_Replayed;
+constexpr double ReplayedSeconds = 15;
+// How far an instance may be from where the partner's game had it to be taken for the same one
+constexpr float SameInstanceReach = 1.0f;
+
+u32 AreaOf(const InstanceContext* instance)
+{
+    return instance != nullptr && instance->chunk != nullptr && instance->chunk->name.string != nullptr
+               ? HashKey(instance->chunk->name.string)
+               : 0;
+}
+
+Vector4 PositionOfInstance(InstanceContext* instance)
+{
+    ObjectPlace* place = instance->place;
+    place->SyncPosition();
+    return place->position;
+}
+
+// The instances of some node kinds in a chunk (as the game's own queries ask: none asleep)
+s32 QueryKinds(ChunkData* chunk, u32 kinds, void** results, u16 most)
+{
+    InstanceQuery query = {};
+    query.results = results;
+    query.most = most;
+    query.distance = 1e30f;
+    query.bits.value = InstanceQueryBits::AllWanted;
+    query.unwantedFlags = ReferencedObjectFlags::Asleep;
+    return QueryChunkInstancesOfKinds(chunk, kinds, &query);
+}
+
+// The instance of a kind in the player's chunk the partner's event names: the one with its ID, else the nearest within reach
+InstanceContext* FindInstance(const WorldEvent& event, NodeKind kind)
+{
+    InstanceContext* player = PlayerInstance();
+    if (player == nullptr || player->chunk == nullptr || AreaOf(player) != event.area)
+    {
+        return nullptr;
+    }
+
+    constexpr u16 Most = 0x100;
+    void* results[Most];
+    s32 count = QueryKinds(player->chunk, 1u << kind, results, Most);
+    InstanceContext* nearest = nullptr;
+    float best = SameInstanceReach * SameInstanceReach;
+    for (s32 index = 0; index < count; index++)
+    {
+        auto* instance = static_cast<InstanceContext*>(results[index]);
+        Vector4 at = PositionOfInstance(instance);
+        float dx = at.x - event.position[0];
+        float dy = at.y - event.position[1];
+        float dz = at.z - event.position[2];
+        float distance = dx * dx + dy * dy + dz * dz;
+        if (event.id != static_cast<u32>(InstanceContext::NoId) && static_cast<u32>(instance->id) == event.id &&
+            distance < 25.0f)
+        {
+            return instance;
+        }
+
+        if (distance < best)
+        {
+            best = distance;
+            nearest = instance;
+        }
+    }
+
+    return nearest;
+}
+
+WorldEvent EventAbout(WorldKind kind, InstanceContext* instance, u32 value)
+{
+    WorldEvent event;
+    event.kind = kind;
+    event.value = value;
+    event.area = AreaOf(instance);
+    event.id = instance != nullptr ? static_cast<u32>(instance->id) : static_cast<u32>(InstanceContext::NoId);
+    if (instance != nullptr)
+    {
+        Vector4 at = PositionOfInstance(instance);
+        event.position[0] = at.x;
+        event.position[1] = at.y;
+        event.position[2] = at.z;
+    }
+
+    return event;
+}
+
+void WatchCrate(InstanceContext* crate, double now, const char* why);
+
+// The partner's crate attacks waiting for this game's player to come near (the game runs the scripts of what's near the player
+// only: a crate attacked far away takes it, but never breaks)
+struct WaitingAttack
+{
+    WorldEvent event;
+    double until;
+};
+std::vector<WaitingAttack> g_WaitingAttacks;
+constexpr float NearCrateReach = 15.0f;
+constexpr double WaitingAttackSeconds = 15 * 60;
+
+bool PlayerNear(const WorldEvent& event)
+{
+    InstanceContext* player = PlayerInstance();
+    if (player == nullptr || player->place == nullptr || AreaOf(player) != event.area)
+    {
+        return false;
+    }
+
+    Vector4 at = PositionOfInstance(player);
+    float dx = at.x - event.position[0];
+    float dy = at.y - event.position[1];
+    float dz = at.z - event.position[2];
+    return dx * dx + dy * dy + dz * dz <= NearCrateReach * NearCrateReach;
+}
+
+// The partner's world events made this game's
+void ApplyWorld(double now)
+{
+    // The waiting attacks whose crates this player has come near: taken as they had just come
+    std::vector<WorldEvent> due;
+    for (auto waiting = g_WaitingAttacks.begin(); waiting != g_WaitingAttacks.end();)
+    {
+        if (PlayerNear(waiting->event))
+        {
+            due.push_back(waiting->event);
+            waiting = g_WaitingAttacks.erase(waiting);
+        }
+        else
+        {
+            waiting = now > waiting->until ? g_WaitingAttacks.erase(waiting) : std::next(waiting);
+        }
+    }
+
+    WorldEvent event;
+    size_t dueIndex = 0;
+    while (dueIndex < due.size() || g_Session.PopWorld(&event))
+    {
+        if (dueIndex < due.size())
+        {
+            event = due[dueIndex++];
+        }
+
+        switch (event.kind)
+        {
+        case WorldCrateHit:
+        {
+            if (!PlayerNear(event))
+            {
+                g_WaitingAttacks.push_back({event, now + WaitingAttackSeconds});
+                Native::Log("coop: the partner's crate at (%.1f, %.1f, %.1f) is far from here: broken when this player comes near",
+                            event.position[0], event.position[1], event.position[2]);
+                break;
+            }
+
+            InstanceContext* crate = FindInstance(event, NodeCrate);
+            if (crate == nullptr)
+            {
+                Native::Log("coop: the partner's crate at (%.1f, %.1f, %.1f) not found here", event.position[0], event.position[1],
+                            event.position[2]);
+                break;
+            }
+
+            // Attacked the way the partner's character attacked it, by the partner's puppet (where the partner is: the crate's
+            // script looks at who attacks from where), else by this game's player
+            Replayed& replayed = g_Replayed[crate];
+            replayed.queued++;
+            replayed.queuedAt = now;
+            replayed.until = now + ReplayedSeconds;
+            InstanceContext* attacker = PlayerInstance();
+            if (g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance) && g_Puppet.chunk == crate->chunk)
+            {
+                attacker = g_Puppet.instance;
+            }
+
+            QueueAttack(crate, event.value, attacker, 1u << NodeCrate);
+            WatchCrate(crate, now, "the partner's attack");
+            break;
+        }
+        case WorldWumpaPickup:
+        case WorldWumpa:
+        {
+            GameController* controller = G_GameController;
+            if (controller != nullptr)
+            {
+                controller->oleg.wumpaToAdd = static_cast<u8>(controller->oleg.wumpaToAdd + event.value);
+            }
+
+            // The pickup the partner took: put to sleep here (out of sight and out of reach)
+            InstanceContext* pickup = event.kind == WorldWumpaPickup ? FindInstance(event, NodePickup) : nullptr;
+            if (pickup != nullptr)
+            {
+                CallVirtual<u32>(pickup, pickup->vtable, ReferencedObject::SleepSlot);
+            }
+
+            Native::Log("coop: %u wumpa fruit from the partner%s", event.value,
+                        event.kind != WorldWumpaPickup ? "" : (pickup != nullptr ? " (their pickup hidden here)" : " (their pickup not found here)"));
+
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    // Forgotten once past their time
+    for (auto entry = g_Replayed.begin(); entry != g_Replayed.end();)
+    {
+        entry = now > entry->second.until ? g_Replayed.erase(entry) : std::next(entry);
+    }
+}
+
+// Crates looked at again a while after an attack (the tests' log): whether they're still there, and the wumpa count
+struct CrateWatch
+{
+    InstanceContext* crate;
+    double at;
+    const char* why;
+};
+std::vector<CrateWatch> g_CrateWatches;
+
+void WatchCrate(InstanceContext* crate, double now, const char* why)
+{
+    if (std::getenv("TWIN_COOP_TEST_CRATE") != nullptr || std::getenv("TWIN_COOP_LOG_CRATES") != nullptr)
+    {
+        g_CrateWatches.push_back({crate, now + 3.0, why});
+    }
+}
+
+void CrateWatchFrame(double now)
+{
+    GameController* controller = G_GameController;
+    for (auto watch = g_CrateWatches.begin(); watch != g_CrateWatches.end();)
+    {
+        if (now < watch->at)
+        {
+            ++watch;
+            continue;
+        }
+
+        bool live = InstanceLive(watch->crate);
+        Native::Log("coop: 3 s after %s, the crate is %s (asleep %u, visible %u); wumpa %u (+%u to add)", watch->why,
+                    live ? "still there" : "gone", live ? static_cast<unsigned>(watch->crate->flags.asleep) : 1u,
+                    live ? static_cast<unsigned>(watch->crate->flags.visible) : 0u,
+                    controller != nullptr ? static_cast<unsigned>(controller->progress.counts.wumpa) : 0u,
+                    controller != nullptr ? static_cast<unsigned>(controller->oleg.wumpaToAdd) : 0u);
+        watch = g_CrateWatches.erase(watch);
+    }
+}
+
+bool IsReplayed(const InstanceContext* instance)
+{
+    auto found = g_Replayed.find(instance);
+    return found != g_Replayed.end() && Now() <= found->second.until;
+}
+
+// $TWIN_COOP_TEST_CRATE=seconds (tests): that long after connecting, the player is put beside the nearest crate that takes hits
+// (within 30 units) and spins at it a second later
+void TestCrate(double now, double connectedAt)
+{
+    static const char* setting = std::getenv("TWIN_COOP_TEST_CRATE");
+    static int stage = 0;
+    static InstanceContext* target = nullptr;
+    static double spinAt = 0;
+    InstanceContext* player = PlayerInstance();
+    if (setting == nullptr || stage == 2 || connectedAt < 0 || now - connectedAt < std::atof(setting) || player == nullptr ||
+        player->chunk == nullptr)
+    {
+        return;
+    }
+
+    if (stage == 1)
+    {
+        if (now >= spinAt)
+        {
+            stage = 2;
+            if (target != nullptr && InstanceLive(target))
+            {
+                Vector4 at = PositionOfInstance(target);
+                Native::Log("coop: test: spinning at the crate at (%.1f, %.1f, %.1f)", at.x, at.y, at.z);
+                QueueAttack(target, AttackSpin, player, 1u << NodeCrate);
+                WatchCrate(target, now, "the test's spin");
+            }
+        }
+
+        return;
+    }
+
+    stage = 1;
+    spinAt = now + 1.0;
+    constexpr u16 Most = 0x100;
+    void* results[Most];
+    s32 count = QueryKinds(player->chunk, 1u << NodeCrate, results, Most);
+    Vector4 from = PositionOfInstance(player);
+    InstanceContext* nearest = nullptr;
+    float best = 30.0f * 30.0f;
+    for (s32 index = 0; index < count; index++)
+    {
+        auto* crate = static_cast<InstanceContext*>(results[index]);
+        Vector4 at = PositionOfInstance(crate);
+        float distance = (at.x - from.x) * (at.x - from.x) + (at.y - from.y) * (at.y - from.y) + (at.z - from.z) * (at.z - from.z);
+        // Only a crate that takes hits (the flat ones laid on the ground don't)
+        if (distance < best && crate->flags.receivesTriggerSignals != 0)
+        {
+            best = distance;
+            nearest = crate;
+        }
+    }
+
+    if (nearest != nullptr)
+    {
+        Vector4 at = PositionOfInstance(nearest);
+        Native::Log("coop: test: going beside the crate at (%.1f, %.1f, %.1f), %d crates here (id %d)", at.x, at.y, at.z, count,
+                    nearest->id);
+        target = nearest;
+        PutPlayerAt(at.x + 1.2f, at.y, at.z);
+    }
+    else
+    {
+        stage = 2;
+        Native::Log("coop: test: no crate within 30 units (%d here)", count);
+    }
+}
+
+// $TWIN_COOP_TEST_PICKUP=seconds (tests): that long after connecting, the player is put on the nearest pickup within 40 units (the
+// game picks it up as it would); the wumpa count logged 3 s later here and on the partner's PC
+void TestPickup(double now, double connectedAt)
+{
+    static const char* setting = std::getenv("TWIN_COOP_TEST_PICKUP");
+    static bool done = false;
+    static double logAt = -1;
+    GameController* controller = G_GameController;
+    if (logAt >= 0 && now >= logAt)
+    {
+        logAt = -1;
+        Native::Log("coop: test: 3 s after the pickup, wumpa %u (+%u to add)",
+                    controller != nullptr ? static_cast<unsigned>(controller->progress.counts.wumpa) : 0u,
+                    controller != nullptr ? static_cast<unsigned>(controller->oleg.wumpaToAdd) : 0u);
+    }
+
+    InstanceContext* player = PlayerInstance();
+    if (setting == nullptr || done || connectedAt < 0 || now - connectedAt < std::atof(setting) || player == nullptr ||
+        player->chunk == nullptr)
+    {
+        return;
+    }
+
+    done = true;
+    constexpr u16 Most = 0x100;
+    void* results[Most];
+    s32 count = QueryKinds(player->chunk, 1u << NodePickup, results, Most);
+    Vector4 from = PositionOfInstance(player);
+    InstanceContext* nearest = nullptr;
+    float best = 40.0f * 40.0f;
+    for (s32 index = 0; index < count; index++)
+    {
+        auto* pickup = static_cast<InstanceContext*>(results[index]);
+        Vector4 at = PositionOfInstance(pickup);
+        float distance = (at.x - from.x) * (at.x - from.x) + (at.y - from.y) * (at.y - from.y) + (at.z - from.z) * (at.z - from.z);
+        if (distance < best && pickup->flags.visible != 0)
+        {
+            best = distance;
+            nearest = pickup;
+        }
+    }
+
+    if (nearest == nullptr)
+    {
+        Native::Log("coop: test: no pickup within 40 units (%d here)", count);
+        return;
+    }
+
+    Vector4 at = PositionOfInstance(nearest);
+    Native::Log("coop: test: going onto the pickup at (%.1f, %.1f, %.1f), %d pickups here; wumpa %u", at.x, at.y, at.z, count,
+                controller != nullptr ? static_cast<unsigned>(controller->progress.counts.wumpa) : 0u);
+    PutPlayerAt(at.x, at.y, at.z);
+    logAt = now + 3.0;
+}
+
 // The backpack's state in the session made this game's: applied or released as it changes, kept up while in it
 void BackpackFrame(double now)
 {
@@ -778,6 +1177,10 @@ void GameFrame()
         }
     }
 
+    ApplyWorld(now);
+    TestCrate(now, connectedAt);
+    TestPickup(now, connectedAt);
+    CrateWatchFrame(now);
     BackpackFrame(now);
     UpdatePuppet(now, local);
 
@@ -789,6 +1192,68 @@ void GameFrame()
     }
 
     ShowLine(line);
+}
+
+void AgentAttacked(InstanceContext* instance, unsigned kind, InstanceContext* sender)
+{
+    if (!g_Session.Connected() || instance == nullptr || GetGameNode(&instance->nodes, NodeCrate) == nullptr)
+    {
+        return;
+    }
+
+    static u32 logged = 0;
+    if (logged < 20)
+    {
+        logged++;
+        Vector4 at = PositionOfInstance(instance);
+        Native::Log("coop: crate at (%.1f, %.1f, %.1f) attacked (kind %u) by %s, signals %u", at.x, at.y, at.z, kind,
+                    sender == PlayerInstance() ? "the player" : "something else",
+                    static_cast<unsigned>(instance->flags.receivesTriggerSignals));
+    }
+
+    // An attack this game queued for the partner's: arrived, not told back
+    auto found = g_Replayed.find(instance);
+    if (found != g_Replayed.end() && found->second.queued != 0)
+    {
+        found->second.queued--;
+        return;
+    }
+
+    if (sender == nullptr || sender != PlayerInstance())
+    {
+        return;
+    }
+
+    g_Session.SendWorld(EventAbout(WorldCrateHit, instance, kind));
+}
+
+bool SuppressesCrateContents(const InstanceContext* crate)
+{
+    bool suppressed = g_Session.GetRole() != Role::Off && IsReplayed(crate);
+    if (suppressed)
+    {
+        Native::Log("coop: a crate the partner broke: its contents left to the partner's game");
+    }
+
+    return suppressed;
+}
+
+bool WumpaPicked(InstanceContext* from, unsigned count)
+{
+    if (g_Session.GetRole() == Role::Off || from == nullptr)
+    {
+        return false;
+    }
+
+    // From a crate the partner broke: the partner's game counted them (and told this one)
+    if (GetGameNode(&from->nodes, NodePickup) == nullptr && IsReplayed(from))
+    {
+        return true;
+    }
+
+    bool pickup = GetGameNode(&from->nodes, NodePickup) != nullptr;
+    g_Session.SendWorld(EventAbout(pickup ? WorldWumpaPickup : WorldWumpa, from, count));
+    return false;
 }
 
 bool HidesShadow(const InstanceContext* instance)

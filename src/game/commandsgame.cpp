@@ -18,6 +18,10 @@
 #include "game/string.h"
 #include "game/widgets.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The commands that ask the game's controllers: the game controller's requests, the video controller, the music, the player, the
 // custom pickups and projectiles
 
@@ -416,6 +420,13 @@ void PickUpWumpaCommand::ExecuteOn(GameNode* node)
 {
     NodeList* nodes = &node->owner->nodes;
     OLEG* oleg = &G_GameController->oleg;
+#ifdef TWIN_NATIVE
+    // Online co-op: the wumpa fruit shared (told the partner's game), none from a crate the partner broke (coop/coopgame.cpp)
+    if (Coop::WumpaPicked(node->owner, static_cast<u32>(wumpaFruit)))
+    {
+        return;
+    }
+#endif
     if (GetGameNode(nodes, NodePickup) == nullptr)
     {
         auto* crate = static_cast<AgentNode*>(GetGameNode(nodes, NodeCrate));
