@@ -11,6 +11,7 @@
 #include "game/resources.h"
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "fixes.h"
 #endif
 
@@ -285,6 +286,14 @@ GraphState* ExecuteState(GraphState* state, BehaviourRunner* runner, BehaviourLe
     if (completion < state->bits.bodyCount)
     {
         StateBody* best = BestBody(state, node, level, clock);
+#ifdef TWIN_NATIVE
+        // Online co-op: a body starting a cutscene waits in its state until the partner is there too (coop/coopgame.cpp); its
+        // condition is checked again next frame
+        if (best != nullptr && Coop::HoldsBody(best, runner, level))
+        {
+            return state;
+        }
+#endif
         if (best != nullptr)
         {
             if (state->bits.child != NoScriptId)
@@ -366,6 +375,14 @@ u32 ExecuteInterrupt(GraphState* state, BehaviourRunner* runner, BehaviourLevel*
     {
         return 0;
     }
+
+#ifdef TWIN_NATIVE
+    // Online co-op: an interrupt starting a cutscene waits for the partner too (coop/coopgame.cpp)
+    if (Coop::HoldsBody(best, runner, level))
+    {
+        return 0;
+    }
+#endif
 
     if (state->bits.child != NoScriptId)
     {

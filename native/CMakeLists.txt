@@ -278,6 +278,8 @@ if(WIN32)
     endif()
     # timeBeginPeriod (src/platform/native/entry.cpp)
     target_link_libraries(twinsanity PRIVATE winmm)
+    # Online co-op's sockets (src/platform/native/coop/coopnet.cpp)
+    target_link_libraries(twinsanity PRIVATE ws2_32)
     # The program's icon (native/icon/AppIcon.ico, 16 to 256 pixels, drawn by native/tools/draw_icon.py) and its version
     # information, as resources (SDL's window takes icon 1 too)
     set(TWIN_ICON ${CMAKE_CURRENT_SOURCE_DIR}/icon/AppIcon.ico)

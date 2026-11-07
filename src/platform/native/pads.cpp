@@ -3,6 +3,7 @@
 // (pressed 0), the sticks (0x80 the middle, up 0) and the buttons' pressures (0-255). See native/NATIVE.md for the mapping
 #include "native.h"
 #include "fixes.h"
+#include "coop/coop.h"
 #include "platform/pads.h"
 #include "ui/bindings.h"
 
@@ -271,6 +272,8 @@ s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
     Native::QuickStartFrame();
     NativeFixes::Frame();
     NativeFixes::GiveBackFrame();
+    // Online co-op's frame (coop/coopgame.cpp): here too, so the network keeps going while a cutscene plays
+    Coop::GameFrame();
     // The level sweep's frame here too: GameController::Update (its other caller) doesn't run while some cutscenes play, the pads'
     // reads do (their skip polls them)
     NativeUi::SweepFrame(true);

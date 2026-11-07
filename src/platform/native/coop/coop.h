@@ -1,0 +1,18 @@
+#pragma once
+
+// Online co-op in the game (COOP.md; coopgame.cpp): the hooks the game's code calls. Off unless $TWIN_COOP (or coop.ini) asks
+// for it, and then the game plays as it always did whenever the partner isn't there
+struct StateBody;
+struct BehaviourRunner;
+struct BehaviourLevel;
+
+namespace Coop
+{
+// Once a frame (the pads' read, platform/native/pads.cpp): the session's network, the local player sent, the backpack and the
+// pull applied, the HUD's line
+void GameFrame();
+
+// A script body about to run (behaviours.cpp's ExecuteState, the body that passed): true to keep the script where it is this
+// frame, because the body starts a cutscene (CutsceneStart, command 589) and the partner isn't there yet
+bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level);
+}
