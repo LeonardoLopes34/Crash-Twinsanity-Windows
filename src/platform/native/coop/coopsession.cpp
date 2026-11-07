@@ -112,6 +112,8 @@ void Session::Connect(const Address& from, double at)
     channel.Reset();
     samples.clear();
     haveLatest = false;
+    partnerPose.clear();
+    partnerPoseTick = 0;
     Notify("Co-op: " + (partnerName.empty() ? std::string("parceiro") : partnerName) + " conectou!", 5);
 }
 
@@ -134,6 +136,8 @@ void Session::Disconnect(const std::string& why)
     haveLatest = false;
     latest = PlayerState();
     partnerHoldKey = 0;
+    partnerPose.clear();
+    partnerPoseTick = 0;
     // Alone again: out of the backpack, and a held cutscene goes on solo
     if (inBackpack)
     {
@@ -229,11 +233,28 @@ void Session::SendState(const PlayerState& local)
     }
 
     writer.F32(state.yaw);
+    for (float value : state.rotation)
+    {
+        writer.F32(value);
+    }
+
+    writer.U16(state.model);
     writer.U16(state.animation);
     writer.F32(state.animationTime);
     writer.U16(state.flags);
     writer.U8(state.skin);
     SendRaw(packet);
+
+    // The pose in a packet of its own (it can be most of a datagram)
+    if (!localPose.empty() && localPose.size() <= MostPacket - 16)
+    {
+        std::vector<uint8_t> pose;
+        Writer poseWriter(&pose);
+        WriteHeader(&poseWriter, PacketKind::Pose);
+        poseWriter.U32(tick);
+        poseWriter.Bytes(localPose.data(), localPose.size());
+        SendRaw(pose);
+    }
 }
 
 void Session::Receive(double at)
@@ -332,6 +353,12 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
         }
 
         state.yaw = reader.F32();
+        for (float& value : state.rotation)
+        {
+            value = reader.F32();
+        }
+
+        state.model = reader.U16();
         state.animation = reader.U16();
         state.animationTime = reader.F32();
         state.flags = reader.U16();
@@ -350,6 +377,18 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
             samples.pop_front();
         }
 
+        return;
+    }
+    case PacketKind::Pose:
+    {
+        uint32_t poseTick = reader.U32();
+        if (!reader.Ok() || (partnerPoseTick != 0 && static_cast<int32_t>(poseTick - partnerPoseTick) <= 0))
+        {
+            return;
+        }
+
+        partnerPoseTick = poseTick;
+        partnerPose.assign(reader.Here(), reader.Here() + reader.Left());
         return;
     }
     case PacketKind::Reliable:
@@ -563,6 +602,25 @@ bool Session::Partner(double at, PlayerState* out) const
             }
 
             out->yaw = LerpAngle(before.state.yaw, after.state.yaw, t);
+            // The turn: the quaternions blended the short way and made unit again
+            const float* a = before.state.rotation;
+            const float* b = after.state.rotation;
+            float sign = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0 ? -1.0f : 1.0f;
+            float length = 0;
+            for (int axis = 0; axis < 4; axis++)
+            {
+                out->rotation[axis] = Lerp(a[axis], b[axis] * sign, t);
+                length += out->rotation[axis] * out->rotation[axis];
+            }
+
+            if (length > 0)
+            {
+                float scale = 1.0f / std::sqrt(length);
+                for (float& value : out->rotation)
+                {
+                    value *= scale;
+                }
+            }
             if (before.state.animation == after.state.animation)
             {
                 out->animationTime = Lerp(before.state.animationTime, after.state.animationTime, t);

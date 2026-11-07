@@ -5,6 +5,7 @@
 struct StateBody;
 struct BehaviourRunner;
 struct BehaviourLevel;
+struct ModelNode;
 
 namespace Coop
 {
@@ -15,4 +16,8 @@ void GameFrame();
 // A script body about to run (behaviours.cpp's ExecuteState, the body that passed): true to keep the script where it is this
 // frame, because the body starts a cutscene (CutsceneStart, command 589) and the partner isn't there yet
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level);
+
+// A model node about to be drawn with its animator's joints (ogi.cpp's ModelNode::Draw): the local player's pose taken to send,
+// the partner's puppet given the partner's pose
+void ModelDrawn(ModelNode* node);
 }

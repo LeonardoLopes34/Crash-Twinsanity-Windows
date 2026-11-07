@@ -12,7 +12,7 @@
 namespace Coop
 {
 constexpr uint32_t Magic = 0x4F435754; // "TWCO"
-constexpr uint16_t ProtocolVersion = 1;
+constexpr uint16_t ProtocolVersion = 2;
 constexpr uint16_t DefaultPort = 27420;
 constexpr size_t MostPacket = 1200;
 
@@ -64,6 +64,7 @@ enum class PacketKind : uint8_t
     Ping = 6,
     Pong = 7,
     Bye = 8,
+    Pose = 9,    // unreliable: the character's joints (the newest wins)
 };
 
 // Little-endian writing and reading of a packet's fields

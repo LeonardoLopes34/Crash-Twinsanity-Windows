@@ -14,9 +14,13 @@
 #include "native.h"
 
 #include "game/agentlab.h"
+#include "game/animation.h"
 #include "game/behaviours.h"
+#include "game/memory.h"
+#include "game/resources.h"
 #include "game/chunkdata.h"
 #include "game/commands.h"
+#include "game/controllers.h"
 #include "game/gamecontroller.h"
 #include "game/instances.h"
 #include "game/objectnode.h"
@@ -142,6 +146,35 @@ float YawOf(const Vector4& rotation)
                       1.0f - 2.0f * (rotation.y * rotation.y + rotation.x * rotation.x));
 }
 
+ModelNode* ModelOf(InstanceContext* instance)
+{
+    return instance != nullptr ? static_cast<ModelNode*>(GetGameNode(&instance->nodes, NodeModel)) : nullptr;
+}
+
+// The game's table of models (OGIs) by their resource IDs: an ID's OGI, none when out of the table
+GameOGI* OgiById(u16 id)
+{
+    ResourceTable* models = G_GameResourcesObjectPointer != nullptr ? G_GameResourcesObjectPointer->models : nullptr;
+    if (models == nullptr || id == NoModelId || (id & ResourceIndexMask) >= models->bits.capacity)
+    {
+        return nullptr;
+    }
+
+    return static_cast<GameOGI*>(models->items[id & ResourceIndexMask]);
+}
+
+// An OGI's resource ID, when the table has it at that ID (else NoModelId)
+u16 IdOfOgi(GameOGI* ogi)
+{
+    if (ogi == nullptr)
+    {
+        return NoModelId;
+    }
+
+    u16 id = static_cast<u16>(ogi->id);
+    return OgiById(id) == ogi ? id : static_cast<u16>(NoModelId);
+}
+
 PlayerState LocalState()
 {
     PlayerState state;
@@ -154,11 +187,20 @@ PlayerState LocalState()
         return state;
     }
 
-    const ObjectPlace* place = player->place;
+    // The position and turn brought up to date with the matrix first, as the game does before it reads them
+    ObjectPlace* place = player->place;
+    place->SyncPosition();
+    place->SyncRotation();
     state.position[0] = place->position.x;
     state.position[1] = place->position.y;
     state.position[2] = place->position.z;
     state.yaw = YawOf(place->rotation);
+    state.rotation[0] = place->rotation.x;
+    state.rotation[1] = place->rotation.y;
+    state.rotation[2] = place->rotation.z;
+    state.rotation[3] = place->rotation.w;
+    ModelNode* model = ModelOf(player);
+    state.model = model != nullptr ? IdOfOgi(model->ogi) : static_cast<u16>(NoModelId);
     state.area = player->chunk != nullptr && player->chunk->name.string != nullptr ? HashKey(player->chunk->name.string) : 0;
     state.flags = PlayerState::Visible;
     if (gameState == GameController::StateWatching)
@@ -183,11 +225,277 @@ void PutPlayerAt(float x, float y, float z)
         return;
     }
 
-    player->place->position.x = x;
-    player->place->position.y = y;
-    player->place->position.z = z;
-    player->place->MarkMoved();
-    QueueObject(player);
+    player->place->SyncPosition();
+    Vector4 to = {x, y, z, 1.0f};
+    if (player->place->MoveTo(&to))
+    {
+        QueueObject(player);
+    }
+}
+
+// The partner drawn in this game: an instance of the partner's model alone (no object node, no physics, no scripts), as the
+// cutscenes make theirs, placed where the partner is and posed as the partner's character is (ModelDrawn)
+struct Puppet
+{
+    InstanceContext* instance = nullptr;
+    ModelNode* node = nullptr;
+    ChunkData* chunk = nullptr;
+    u16 model = NoModelId;
+};
+Puppet g_Puppet;
+
+void HidePuppet()
+{
+    if (g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance))
+    {
+        g_Puppet.instance->flags.visible = 0;
+    }
+}
+
+InstanceContext* MakePuppet(ChunkData* chunk, GameOGI* ogi)
+{
+    auto* instance = InstanceContext::Construct(static_cast<InstanceContext*>(MemoryAllocate(sizeof(InstanceContext))));
+    auto* node = ModelNode::Construct(static_cast<ModelNode*>(MemoryAllocate(sizeof(ModelNode))));
+    node->SetOgi(ogi, 0, 0);
+    instance->flags.visible = 1;
+    RegisterNode(instance, AttachNode, node);
+    node->AttachCollision();
+    // Its joints made every frame (it's posed over them as it's drawn)
+    node->bits.alwaysAnimated = 1;
+    ChunkData::AddInstance(chunk, instance);
+    return instance;
+}
+
+// The puppet where the partner is, when both are in the same area and the partner plays (not in the backpack, a cutscene or a
+// load); hidden otherwise
+void UpdatePuppet(double now, const PlayerState& local)
+{
+    GameController* controller = G_GameController;
+    InstanceContext* player = PlayerInstance();
+    PlayerState partner;
+    bool show = g_Session.Connected() && g_Session.Partner(now, &partner) && player != nullptr && player->chunk != nullptr &&
+                controller != nullptr && controller->State() == GameController::StatePlaying && partner.area == local.area &&
+                partner.area != 0 && !partner.Has(PlayerState::InBackpack) && !partner.Has(PlayerState::Watching) &&
+                !partner.Has(PlayerState::Loading);
+    if (!show)
+    {
+        HidePuppet();
+        return;
+    }
+
+    // The partner's model, or this player's when it isn't known here
+    ModelNode* own = ModelOf(player);
+    GameOGI* ogi = OgiById(partner.model);
+    if (ogi == nullptr)
+    {
+        ogi = own != nullptr ? own->ogi : nullptr;
+    }
+
+    if (ogi == nullptr)
+    {
+        HidePuppet();
+        return;
+    }
+
+    // Made again when it's gone (its chunk let go of it) or this player is in another chunk (the old one left hidden: its chunk
+    // frees it)
+    bool live = g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance);
+    if (!live || g_Puppet.chunk != player->chunk)
+    {
+        if (live)
+        {
+            g_Puppet.instance->flags.visible = 0;
+        }
+
+        g_Puppet.instance = MakePuppet(player->chunk, ogi);
+        g_Puppet.node = ModelOf(g_Puppet.instance);
+        g_Puppet.chunk = player->chunk;
+        g_Puppet.model = partner.model;
+        Native::Log("coop: the partner's puppet made in %s (model %04X, %u joints)",
+                    player->chunk->name.string != nullptr ? player->chunk->name.string : "?", partner.model,
+                    static_cast<unsigned>(ogi->jointCount));
+    }
+    else if (g_Puppet.node != nullptr && g_Puppet.node->ogi != ogi)
+    {
+        // The partner switched character (Crash, Cortex, Nina)
+        g_Puppet.node->SetOgi(ogi, 0, 0);
+        g_Puppet.model = partner.model;
+    }
+
+    InstanceContext* instance = g_Puppet.instance;
+    instance->flags.visible = 1;
+    ObjectPlace* place = instance->place;
+    place->SyncPosition();
+    Vector4 position = {partner.position[0], partner.position[1], partner.position[2], 1.0f};
+    bool moved = place->MoveTo(&position);
+    place->SyncRotation();
+    Vector4 rotation = {partner.rotation[0], partner.rotation[1], partner.rotation[2], partner.rotation[3]};
+    bool turned = place->TurnTo(&rotation);
+    if (moved || turned)
+    {
+        QueueObject(instance);
+    }
+}
+
+// A pose packed for the network: the joints' count, the translations' scale, then each joint's turn (a unit quaternion in
+// 16-bit parts), translation (16-bit parts of the scale) and its rows' lengths (64ths)
+constexpr size_t PoseJointBytes = 4 * 2 + 3 * 2 + 3;
+constexpr u32 MostPoseJoints = (MostPacket - 32) / PoseJointBytes;
+
+s16 Pack16(float value, float scale)
+{
+    float scaled = value / scale;
+    scaled = scaled > 32767.0f ? 32767.0f : (scaled < -32767.0f ? -32767.0f : scaled);
+    return static_cast<s16>(std::lround(scaled));
+}
+
+void PackPose(const Matrix4x4* joints, u32 count, std::vector<uint8_t>* out)
+{
+    count = count < MostPoseJoints ? count : MostPoseJoints;
+    out->clear();
+    Writer writer(out);
+    writer.U8(static_cast<uint8_t>(count));
+    float reach = 0;
+    for (u32 joint = 0; joint < count; joint++)
+    {
+        for (int axis = 0; axis < 3; axis++)
+        {
+            reach = std::fmax(reach, std::fabs(joints[joint].m[3][axis]));
+        }
+    }
+
+    float translationScale = reach > 0 ? reach / 32767.0f : 1.0f;
+    writer.F32(translationScale);
+    for (u32 joint = 0; joint < count; joint++)
+    {
+        const Matrix4x4& matrix = joints[joint];
+        float r[3][3];
+        float lengths[3];
+        for (int row = 0; row < 3; row++)
+        {
+            lengths[row] = std::sqrt(matrix.m[row][0] * matrix.m[row][0] + matrix.m[row][1] * matrix.m[row][1] +
+                                     matrix.m[row][2] * matrix.m[row][2]);
+            float inverse = lengths[row] > 1e-6f ? 1.0f / lengths[row] : 0.0f;
+            for (int column = 0; column < 3; column++)
+            {
+                r[row][column] = matrix.m[row][column] * inverse;
+            }
+        }
+
+        // The rotation's quaternion (the pair of UnpackPose's matrix)
+        float x, y, z, w;
+        float trace = r[0][0] + r[1][1] + r[2][2];
+        if (trace > 0)
+        {
+            float s = std::sqrt(trace + 1.0f) * 2.0f;
+            w = 0.25f * s, x = (r[2][1] - r[1][2]) / s, y = (r[0][2] - r[2][0]) / s, z = (r[1][0] - r[0][1]) / s;
+        }
+        else if (r[0][0] > r[1][1] && r[0][0] > r[2][2])
+        {
+            float s = std::sqrt(1.0f + r[0][0] - r[1][1] - r[2][2]) * 2.0f;
+            w = (r[2][1] - r[1][2]) / s, x = 0.25f * s, y = (r[0][1] + r[1][0]) / s, z = (r[0][2] + r[2][0]) / s;
+        }
+        else if (r[1][1] > r[2][2])
+        {
+            float s = std::sqrt(1.0f + r[1][1] - r[0][0] - r[2][2]) * 2.0f;
+            w = (r[0][2] - r[2][0]) / s, x = (r[0][1] + r[1][0]) / s, y = 0.25f * s, z = (r[1][2] + r[2][1]) / s;
+        }
+        else
+        {
+            float s = std::sqrt(1.0f + r[2][2] - r[0][0] - r[1][1]) * 2.0f;
+            w = (r[1][0] - r[0][1]) / s, x = (r[0][2] + r[2][0]) / s, y = (r[1][2] + r[2][1]) / s, z = 0.25f * s;
+        }
+
+        for (float part : {x, y, z, w})
+        {
+            writer.U16(static_cast<uint16_t>(Pack16(part, 1.0f / 32767.0f)));
+        }
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            writer.U16(static_cast<uint16_t>(Pack16(matrix.m[3][axis], translationScale)));
+        }
+
+        for (float length : lengths)
+        {
+            float scaled = std::round(length * 64.0f);
+            writer.U8(static_cast<uint8_t>(scaled > 255.0f ? 255.0f : scaled));
+        }
+    }
+}
+
+// A packed pose written over joints' matrices: false (nothing written) when it isn't for that many joints
+bool UnpackPose(const std::vector<uint8_t>& pose, Matrix4x4* joints, u32 count)
+{
+    Reader reader(pose.data(), pose.size());
+    u32 packed = reader.U8();
+    float translationScale = reader.F32();
+    if (!reader.Ok() || packed != count || reader.Left() < packed * PoseJointBytes)
+    {
+        return false;
+    }
+
+    for (u32 joint = 0; joint < packed; joint++)
+    {
+        float q[4];
+        for (float& part : q)
+        {
+            part = static_cast<float>(static_cast<s16>(reader.U16())) / 32767.0f;
+        }
+
+        float length = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        if (length > 0)
+        {
+            for (float& part : q)
+            {
+                part /= length;
+            }
+        }
+
+        float x = q[0], y = q[1], z = q[2], w = q[3];
+        float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+                         {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+                         {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+        float translation[3];
+        for (float& value : translation)
+        {
+            value = static_cast<float>(static_cast<s16>(reader.U16())) * translationScale;
+        }
+
+        Matrix4x4& matrix = joints[joint];
+        for (int row = 0; row < 3; row++)
+        {
+            float rowLength = static_cast<float>(reader.U8()) / 64.0f;
+            for (int column = 0; column < 3; column++)
+            {
+                matrix.m[row][column] = r[row][column] * rowLength;
+            }
+
+            matrix.m[row][3] = 0.0f;
+            matrix.m[3][row] = translation[row];
+        }
+
+        matrix.m[3][3] = 1.0f;
+    }
+
+    return reader.Ok();
+}
+
+// How many joints' matrices an animator has written this frame (its OGI's joints, when the matrices reach that far)
+u32 JointsWritten(const OgiAnimator* animator, const GameOGI* ogi)
+{
+    if (animator == nullptr || ogi == nullptr || animator->matrices.start == nullptr)
+    {
+        return 0;
+    }
+
+    u32 count = ogi->jointCount;
+    if (animator->matrices.end != nullptr && animator->matrices.end - animator->matrices.start < static_cast<ptrdiff_t>(count))
+    {
+        return 0;
+    }
+
+    return count;
 }
 
 void RideInBackpack(double now)
@@ -295,7 +603,13 @@ void GameFrame()
 
     double now = Now();
     PlayerState local = LocalState();
-    g_Session.Update(now, local);
+    // $TWIN_COOP_TEST_OFFSET (tests on one PC, both players starting at the same place): the position sent moved along x
+    static const float testOffset = static_cast<float>(std::atof(std::getenv("TWIN_COOP_TEST_OFFSET") != nullptr
+                                                                    ? std::getenv("TWIN_COOP_TEST_OFFSET")
+                                                                    : "0"));
+    PlayerState sent = local;
+    sent.position[0] += testOffset;
+    g_Session.Update(now, sent);
 
     // The session's notices in the log too (connected, left...), and the link's round trip every 10 s while connected
     static std::string lastLogged;
@@ -356,6 +670,8 @@ void GameFrame()
         RideInBackpack(now);
     }
 
+    UpdatePuppet(now, local);
+
     // The HUD: the cutscene's wait first, else the session's latest notice (connected, left...)
     std::string line = GateLine(now);
     if (line.empty() && !g_Session.Notices().empty())
@@ -364,6 +680,47 @@ void GameFrame()
     }
 
     ShowLine(line);
+}
+
+void ModelDrawn(ModelNode* node)
+{
+    if (g_Session.GetRole() == Role::Off || node == nullptr)
+    {
+        return;
+    }
+
+    // This player's character: its pose taken for the next state packet
+    InstanceContext* player = PlayerInstance();
+    if (player != nullptr && node == ModelOf(player))
+    {
+        u32 count = JointsWritten(node->drawnAnimator, node->drawnOgi);
+        if (count != 0)
+        {
+            std::vector<uint8_t> pose;
+            PackPose(node->drawnAnimator->matrices.start, count, &pose);
+            g_Session.SetLocalPose(pose);
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                const Matrix4x4& root = node->drawnAnimator->matrices.start[0];
+                Native::Log("coop: the player's pose: %u joints, %zu bytes, root joint at (%.2f, %.2f, %.2f)", count, pose.size(),
+                            root.m[3][0], root.m[3][1], root.m[3][2]);
+            }
+        }
+
+        return;
+    }
+
+    // The partner's puppet: posed as the partner's character, when the pose is for its model's joints
+    if (node == g_Puppet.node && g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance))
+    {
+        u32 count = JointsWritten(node->drawnAnimator, node->drawnOgi);
+        if (count != 0 && !g_Session.PartnerPose().empty())
+        {
+            UnpackPose(g_Session.PartnerPose(), node->drawnAnimator->matrices.start, count);
+        }
+    }
 }
 
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level)

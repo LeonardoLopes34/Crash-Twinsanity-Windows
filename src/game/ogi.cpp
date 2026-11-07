@@ -13,6 +13,10 @@
 #include "platform/math.h"
 #include "retail/libc.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 namespace
 {
 Platform::Graphics::ModelLights LightsAt(const ChunkLights* lights)
@@ -372,6 +376,13 @@ void ModelNode::Draw(const Matrix4x4* matrix, const Matrix4x4* chunkMatrix, Chun
     if (drawnOgi != nullptr)
     {
         GatherStrongestLights(lights, chunkMatrix, lighting);
+#ifdef TWIN_NATIVE
+        // Online co-op: the player's pose taken, the partner's puppet posed (coop/coopgame.cpp)
+        if (drawnAnimator != nullptr)
+        {
+            Coop::ModelDrawn(this);
+        }
+#endif
         if (drawnAnimator == nullptr)
         {
             DrawOgiRigidModels(drawnOgi, matrix, lights, mode);

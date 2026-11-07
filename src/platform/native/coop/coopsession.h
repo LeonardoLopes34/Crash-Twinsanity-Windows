@@ -36,6 +36,8 @@ struct PlayerState
     uint32_t area = 0; // the level (chunk) it's in, as a hash of its name
     float position[3] = {0, 0, 0};
     float yaw = 0;
+    float rotation[4] = {0, 0, 0, 1}; // the character's turn as the game keeps it (a quaternion)
+    uint16_t model = 0xFFFF;          // the character's model (its OGI's resource), 0xFFFF unknown
     uint16_t animation = 0;
     float animationTime = 0;
     uint16_t flags = 0;
@@ -133,6 +135,10 @@ public:
     // The newest state, as it came
     const PlayerState& PartnerLatest() const { return latest; }
 
+    // The character's pose (its joints, packed by the game: coopgame.cpp), sent with the state; and the partner's newest
+    const std::vector<uint8_t>& PartnerPose() const { return partnerPose; }
+    void SetLocalPose(const std::vector<uint8_t>& pose) { localPose = pose; }
+
     // The backpack: going in (false when not allowed now), coming out
     bool EnterBackpack();
     void LeaveBackpack();
@@ -213,6 +219,9 @@ private:
 
     std::deque<WorldEvent> world;
     std::deque<Notice> notices;
+    std::vector<uint8_t> localPose;
+    std::vector<uint8_t> partnerPose;
+    uint32_t partnerPoseTick = 0;
 };
 
 // A cutscene's key from what names it (the director's object, the graph): FNV-1a
