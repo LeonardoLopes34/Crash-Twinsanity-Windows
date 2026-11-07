@@ -12,7 +12,7 @@
 namespace Coop
 {
 constexpr uint32_t Magic = 0x4F435754; // "TWCO"
-constexpr uint16_t ProtocolVersion = 2;
+constexpr uint16_t ProtocolVersion = 3;
 constexpr uint16_t DefaultPort = 27420;
 constexpr size_t MostPacket = 1200;
 
@@ -76,6 +76,7 @@ public:
     void U16(uint16_t value);
     void U32(uint32_t value);
     void F32(float value);
+    void F64(double value);
     void Bytes(const void* data, size_t size);
     void Text(const std::string& text, size_t most);
 
@@ -91,6 +92,7 @@ public:
     uint16_t U16();
     uint32_t U32();
     float F32();
+    double F64();
     bool Bytes(void* out, size_t size);
     std::string Text();
     bool Ok() const { return ok; }

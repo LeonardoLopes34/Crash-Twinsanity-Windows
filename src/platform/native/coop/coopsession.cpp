@@ -114,6 +114,8 @@ void Session::Connect(const Address& from, double at)
     haveLatest = false;
     partnerPose.clear();
     partnerPoseTick = 0;
+    poses.clear();
+    haveClockOffset = false;
     Notify("Co-op: " + (partnerName.empty() ? std::string("parceiro") : partnerName) + " conectou!", 5);
 }
 
@@ -138,6 +140,8 @@ void Session::Disconnect(const std::string& why)
     partnerHoldKey = 0;
     partnerPose.clear();
     partnerPoseTick = 0;
+    poses.clear();
+    haveClockOffset = false;
     // Alone again: out of the backpack, and a held cutscene goes on solo
     if (inBackpack)
     {
@@ -183,7 +187,8 @@ void Session::Update(double at, const PlayerState& local)
         return;
     }
 
-    if (now - lastState >= 1.0 / settings.stateHz)
+    // (A tenth of slack: a 60 Hz frame a little quicker than 1/60 s still sends, else every other frame would)
+    if (now - lastState >= 0.9 / settings.stateHz)
     {
         lastState = now;
         SendState(local);
@@ -226,6 +231,9 @@ void Session::SendState(const PlayerState& local)
     Writer writer(&packet);
     WriteHeader(&writer, PacketKind::State);
     writer.U32(++tick);
+    // The sender's clock: the partner's game places the state on this PC's timeline by it (not by when it came: the network's
+    // jitter would show as stutter)
+    writer.F64(now);
     writer.U32(state.area);
     for (float value : state.position)
     {
@@ -252,6 +260,7 @@ void Session::SendState(const PlayerState& local)
         Writer poseWriter(&pose);
         WriteHeader(&poseWriter, PacketKind::Pose);
         poseWriter.U32(tick);
+        poseWriter.F64(now);
         poseWriter.Bytes(localPose.data(), localPose.size());
         SendRaw(pose);
     }
@@ -346,6 +355,7 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
     {
         PlayerState state;
         state.tick = reader.U32();
+        double sentAt = reader.F64();
         state.area = reader.U32();
         for (float& value : state.position)
         {
@@ -371,7 +381,7 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
 
         latest = state;
         haveLatest = true;
-        samples.push_back({at, state});
+        samples.push_back({PartnerTime(sentAt, at), state});
         while (samples.size() > MostSamples)
         {
             samples.pop_front();
@@ -382,6 +392,7 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
     case PacketKind::Pose:
     {
         uint32_t poseTick = reader.U32();
+        double sentAt = reader.F64();
         if (!reader.Ok() || (partnerPoseTick != 0 && static_cast<int32_t>(poseTick - partnerPoseTick) <= 0))
         {
             return;
@@ -389,6 +400,12 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
 
         partnerPoseTick = poseTick;
         partnerPose.assign(reader.Here(), reader.Here() + reader.Left());
+        poses.push_back({PartnerTime(sentAt, at), partnerPose});
+        while (poses.size() > MostSamples)
+        {
+            poses.pop_front();
+        }
+
         return;
     }
     case PacketKind::Reliable:
@@ -648,6 +665,61 @@ bool Session::Partner(double at, PlayerState* out) const
     }
 
     *out = samples.back().state;
+    return true;
+}
+
+double Session::PartnerTime(double sentAt, double arrivedAt)
+{
+    // The quickest packet sets the difference; slower ones nudge it up a little (the clocks drift, the route changes)
+    constexpr double Creep = 0.002;
+    double sample = arrivedAt - sentAt;
+    if (!haveClockOffset || sample < clockOffset)
+    {
+        clockOffset = sample;
+        haveClockOffset = true;
+    }
+    else
+    {
+        clockOffset += (sample - clockOffset) * Creep;
+    }
+
+    return sentAt + clockOffset;
+}
+
+bool Session::PartnerPoses(double at, const std::vector<uint8_t>** from, const std::vector<uint8_t>** to, float* share) const
+{
+    if (poses.empty() || !Connected())
+    {
+        return false;
+    }
+
+    double wanted = at - settings.interpolationDelay;
+    if (wanted <= poses.front().at || poses.size() == 1)
+    {
+        *from = *to = &poses.front().pose;
+        *share = 0;
+        return true;
+    }
+
+    for (size_t index = 1; index < poses.size(); index++)
+    {
+        const PoseSample& before = poses[index - 1];
+        const PoseSample& after = poses[index];
+        if (wanted > after.at)
+        {
+            continue;
+        }
+
+        *from = &before.pose;
+        *to = &after.pose;
+        double span = after.at - before.at;
+        *share = span > 0 ? static_cast<float>((wanted - before.at) / span) : 1.0f;
+        return true;
+    }
+
+    // Past the newest (late packets): the newest held
+    *from = *to = &poses.back().pose;
+    *share = 0;
     return true;
 }
 

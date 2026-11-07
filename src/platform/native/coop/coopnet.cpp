@@ -252,6 +252,14 @@ void Writer::F32(float value)
     U32(bits);
 }
 
+void Writer::F64(double value)
+{
+    uint64_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    U32(static_cast<uint32_t>(bits));
+    U32(static_cast<uint32_t>(bits >> 32));
+}
+
 void Writer::Bytes(const void* data, size_t size)
 {
     const auto* from = static_cast<const uint8_t*>(data);
@@ -292,6 +300,15 @@ float Reader::F32()
 {
     uint32_t bits = U32();
     float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+double Reader::F64()
+{
+    uint64_t low = U32();
+    uint64_t bits = low | (static_cast<uint64_t>(U32()) << 32);
+    double value;
     std::memcpy(&value, &bits, sizeof(value));
     return value;
 }

@@ -17,6 +17,10 @@ void GameFrame();
 // Whether online co-op is on (asked for, whether or not the partner is there)
 bool Active();
 
+// $TWIN_COOP_TEST_RUN=seconds (tests): that long after connecting, the left stick pushed all the way round in a slow circle (the
+// character runs in circles, its animations playing as when played), the stick's bytes (0-255, 128 the middle) replaced
+void TestStick(unsigned char* x, unsigned char* y);
+
 // A script body about to run (behaviours.cpp's ExecuteState, the body that passed): true to keep the script where it is this
 // frame, because the body starts a cutscene (CutsceneStart, command 589) and the partner isn't there yet
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level);

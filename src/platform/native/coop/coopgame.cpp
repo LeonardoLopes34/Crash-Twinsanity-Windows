@@ -324,6 +324,46 @@ void UpdatePuppet(double now, const PlayerState& local)
         g_Puppet.model = partner.model;
     }
 
+    // $TWIN_COOP_LOG_SMOOTH (tests): how evenly the puppet moves, frame by frame, logged every 3 s while the partner moves: frames
+    // it stood still (stutter), frames it went more than twice the mean (jumps)
+    static const bool logSmooth = std::getenv("TWIN_COOP_LOG_SMOOTH") != nullptr;
+    if (logSmooth)
+    {
+        static float lastX = 0, lastZ = 0;
+        static std::vector<float> steps;
+        static double since = now;
+        float step = std::sqrt((partner.position[0] - lastX) * (partner.position[0] - lastX) +
+                               (partner.position[2] - lastZ) * (partner.position[2] - lastZ));
+        lastX = partner.position[0];
+        lastZ = partner.position[2];
+        if (step < 5.0f)
+        {
+            steps.push_back(step);
+        }
+
+        if (now - since >= 3.0)
+        {
+            float sum = 0;
+            for (float value : steps)
+            {
+                sum += value;
+            }
+
+            float mean = steps.empty() ? 0.0f : sum / static_cast<float>(steps.size());
+            int still = 0;
+            int jumps = 0;
+            for (float value : steps)
+            {
+                still += mean > 0.01f && value < mean * 0.1f ? 1 : 0;
+                jumps += mean > 0.01f && value > mean * 2.0f ? 1 : 0;
+            }
+
+            Native::Log("coop: smoothness: %zu frames, mean step %.3f, %d still, %d jumps", steps.size(), mean, still, jumps);
+            steps.clear();
+            since = now;
+        }
+    }
+
     InstanceContext* instance = g_Puppet.instance;
     instance->flags.visible = 1;
     ObjectPlace* place = instance->place;
@@ -426,8 +466,16 @@ void PackPose(const Matrix4x4* joints, u32 count, std::vector<uint8_t>* out)
     }
 }
 
-// A packed pose written over joints' matrices: false (nothing written) when it isn't for that many joints
-bool UnpackPose(const std::vector<uint8_t>& pose, Matrix4x4* joints, u32 count)
+// A joint of a pose as it travels: its turn (a unit quaternion), translation and rows' lengths
+struct JointPose
+{
+    float q[4];
+    float t[3];
+    float s[3];
+};
+
+// A packed pose read back: false when it isn't for that many joints
+bool DecodePose(const std::vector<uint8_t>& pose, u32 count, JointPose* joints)
 {
     Reader reader(pose.data(), pose.size());
     u32 packed = reader.U8();
@@ -439,48 +487,103 @@ bool UnpackPose(const std::vector<uint8_t>& pose, Matrix4x4* joints, u32 count)
 
     for (u32 joint = 0; joint < packed; joint++)
     {
-        float q[4];
-        for (float& part : q)
+        JointPose& out = joints[joint];
+        float length = 0;
+        for (float& part : out.q)
         {
             part = static_cast<float>(static_cast<s16>(reader.U16())) / 32767.0f;
+            length += part * part;
         }
 
-        float length = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        if (length > 0)
+        length = std::sqrt(length);
+        for (float& part : out.q)
         {
-            for (float& part : q)
-            {
-                part /= length;
-            }
+            part = length > 0 ? part / length : 0.0f;
         }
 
-        float x = q[0], y = q[1], z = q[2], w = q[3];
-        float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
-                         {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
-                         {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
-        float translation[3];
-        for (float& value : translation)
+        for (float& value : out.t)
         {
             value = static_cast<float>(static_cast<s16>(reader.U16())) * translationScale;
         }
 
-        Matrix4x4& matrix = joints[joint];
-        for (int row = 0; row < 3; row++)
+        for (float& value : out.s)
         {
-            float rowLength = static_cast<float>(reader.U8()) / 64.0f;
-            for (int column = 0; column < 3; column++)
-            {
-                matrix.m[row][column] = r[row][column] * rowLength;
-            }
-
-            matrix.m[row][3] = 0.0f;
-            matrix.m[3][row] = translation[row];
+            value = static_cast<float>(reader.U8()) / 64.0f;
         }
-
-        matrix.m[3][3] = 1.0f;
     }
 
     return reader.Ok();
+}
+
+// A joint's matrix from its turn, translation and rows' lengths (the pair of PackPose's quaternion)
+void ComposeJoint(const JointPose& joint, Matrix4x4* matrix)
+{
+    float x = joint.q[0], y = joint.q[1], z = joint.q[2], w = joint.q[3];
+    float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+                     {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+                     {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+    for (int row = 0; row < 3; row++)
+    {
+        for (int column = 0; column < 3; column++)
+        {
+            matrix->m[row][column] = r[row][column] * joint.s[row];
+        }
+
+        matrix->m[row][3] = 0.0f;
+        matrix->m[3][row] = joint.t[row];
+    }
+
+    matrix->m[3][3] = 1.0f;
+}
+
+// Two packed poses blended a share of the way from the first to the second, written over joints' matrices: each joint's turn the
+// short way (normalised), its translation and lengths in a straight line. False (nothing written) when they aren't for that many
+// joints
+bool BlendPoses(const std::vector<uint8_t>& from, const std::vector<uint8_t>& to, float share, Matrix4x4* joints, u32 count)
+{
+    static std::vector<JointPose> a;
+    static std::vector<JointPose> b;
+    a.resize(count);
+    b.resize(count);
+    if (!DecodePose(from, count, a.data()))
+    {
+        return false;
+    }
+
+    bool blend = &from != &to && share > 0.0f && DecodePose(to, count, b.data());
+    share = share > 1.0f ? 1.0f : share;
+    for (u32 index = 0; index < count; index++)
+    {
+        JointPose joint = a[index];
+        if (blend)
+        {
+            const JointPose& next = b[index];
+            float dot = joint.q[0] * next.q[0] + joint.q[1] * next.q[1] + joint.q[2] * next.q[2] + joint.q[3] * next.q[3];
+            float sign = dot < 0 ? -1.0f : 1.0f;
+            float length = 0;
+            for (int part = 0; part < 4; part++)
+            {
+                joint.q[part] += (next.q[part] * sign - joint.q[part]) * share;
+                length += joint.q[part] * joint.q[part];
+            }
+
+            length = std::sqrt(length);
+            for (float& part : joint.q)
+            {
+                part = length > 0 ? part / length : 0.0f;
+            }
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                joint.t[axis] += (next.t[axis] - joint.t[axis]) * share;
+                joint.s[axis] += (next.s[axis] - joint.s[axis]) * share;
+            }
+        }
+
+        ComposeJoint(joint, &joints[index]);
+    }
+
+    return true;
 }
 
 // How many joints' matrices an animator has written this frame (its OGI's joints, when the matrices reach that far)
@@ -1261,6 +1364,34 @@ bool HidesShadow(const InstanceContext* instance)
     return g_Backpack.applied && instance == g_Backpack.instance;
 }
 
+void TestStick(unsigned char* x, unsigned char* y)
+{
+    static const char* setting = std::getenv("TWIN_COOP_TEST_RUN");
+    static double connectedAt = -1;
+    if (setting == nullptr || g_Session.GetRole() == Role::Off)
+    {
+        return;
+    }
+
+    double now = Now();
+    connectedAt = g_Session.Connected() ? (connectedAt < 0 ? now : connectedAt) : -1;
+    if (connectedAt < 0 || now - connectedAt < std::atof(setting))
+    {
+        return;
+    }
+
+    // A turn every 6 seconds; a second standing still every 4 (the idle animation too)
+    double running = now - connectedAt;
+    if (std::fmod(running, 4.0) < 1.0)
+    {
+        return;
+    }
+
+    double angle = running * (2.0 * 3.14159265 / 6.0);
+    *x = static_cast<unsigned char>(128.0 + 127.0 * std::cos(angle));
+    *y = static_cast<unsigned char>(128.0 + 127.0 * std::sin(angle));
+}
+
 bool Active()
 {
     StartOnce();
@@ -1306,9 +1437,13 @@ bool ModelDrawn(ModelNode* node)
     if (node == g_Puppet.node && g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance))
     {
         u32 count = JointsWritten(node->drawnAnimator, node->drawnOgi);
-        if (count != 0 && !g_Session.PartnerPose().empty())
+        // The two poses around the moment the puppet is placed at, blended (the same moment as its place: Session::Partner)
+        const std::vector<uint8_t>* from = nullptr;
+        const std::vector<uint8_t>* to = nullptr;
+        float share = 0;
+        if (count != 0 && g_Session.PartnerPoses(Now(), &from, &to, &share))
         {
-            UnpackPose(g_Session.PartnerPose(), node->drawnAnimator->matrices.start, count);
+            BlendPoses(*from, *to, share, node->drawnAnimator->matrices.start, count);
         }
     }
 

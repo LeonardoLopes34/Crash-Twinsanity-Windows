@@ -109,6 +109,39 @@ void TestMovement()
     Check(have, "o host recebe o estado do parceiro");
     Check(std::fabs(seen.position[0] - expected) < 1.0f, "a posição interpolada fica perto da real (100 ms atrás)");
     Check(seen.Has(PlayerState::Visible) && std::fabs(seen.yaw - 1.0f) < 0.01f, "rotação e estado chegam");
+
+    // Smooth: sampled every frame, the interpolated x never steps back and never jumps more than two frames' worth
+    float last = -1e9f;
+    bool smooth = true;
+    for (int frame = 0; frame < 120; frame++)
+    {
+        pair.clientPlayer.position[0] = static_cast<float>((g_Time - startTime) * 10.0);
+        pair.Step();
+        PlayerState now;
+        pair.host.Partner(g_Time, &now);
+        if (last > -1e8f && (now.position[0] < last - 0.001f || now.position[0] - last > 2 * 10.0f / 60.0f + 0.05f))
+        {
+            smooth = false;
+        }
+
+        last = now.position[0];
+    }
+
+    Check(smooth, "o movimento interpolado é liso (sem voltar nem pular) a 60 quadros por segundo");
+
+    // The pose: two around the moment drawn, and a share between them
+    for (int frame = 0; frame < 30; frame++)
+    {
+        pair.client.SetLocalPose(std::vector<uint8_t>(64, static_cast<uint8_t>(frame)));
+        pair.Step();
+    }
+
+    const std::vector<uint8_t>* from = nullptr;
+    const std::vector<uint8_t>* to = nullptr;
+    float share = -1;
+    bool havePoses = pair.host.PartnerPoses(g_Time, &from, &to, &share) && from != nullptr && to != nullptr;
+    Check(havePoses && from != to && (*from)[0] + 1 == (*to)[0] && share >= 0.0f && share <= 1.0f,
+          "a pose vem em pares consecutivos para ser interpolada");
 }
 
 void TestCutsceneBothArrive()

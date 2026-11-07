@@ -295,6 +295,8 @@ s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
     pressure[PressureL2] = bound.l2Pressure;
     pressure[PressureR2] = bound.r2Pressure;
     u8 rightX = bound.rightX, rightY = bound.rightY, leftX = bound.leftX, leftY = bound.leftY;
+    // Online co-op's tests: the left stick turned round on its own ($TWIN_COOP_TEST_RUN)
+    Coop::TestStick(&leftX, &leftY);
 
     // The digital buttons' pressures: fully pressed (the triggers have their own when a gamepad gives them)
     for (const PressureOf& of : Pressures)

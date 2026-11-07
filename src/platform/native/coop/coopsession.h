@@ -85,7 +85,7 @@ struct Settings
     std::string join;              // the client: the host's address ("26.x.x.x" from Radmin VPN)
     std::string name = "Jogador";
     uint8_t skin = 0;
-    double stateHz = 30;           // state packets a second
+    double stateHz = 60;           // state (and pose) packets a second: the game's own frame rate, so the partner moves as smoothly
     double interpolationDelay = 0.1;
     double timeoutSeconds = 6;
     double pullOfferSeconds = 8;   // waiting at a cutscene this long offers to pull the partner over
@@ -142,6 +142,9 @@ public:
     // The character's pose (its joints, packed by the game: coopgame.cpp), sent with the state; and the partner's newest
     const std::vector<uint8_t>& PartnerPose() const { return partnerPose; }
     void SetLocalPose(const std::vector<uint8_t>& pose) { localPose = pose; }
+    // The two poses around the moment the partner is drawn at (InterpolationDelay ago, on the partner's clock) and the share of
+    // the way from the first to the second: false with none yet. The same moment as Partner's, so the pose and the place agree
+    bool PartnerPoses(double now, const std::vector<uint8_t>** from, const std::vector<uint8_t>** to, float* share) const;
 
     // The backpack: going in (false when not allowed now), coming out
     bool EnterBackpack();
@@ -180,6 +183,9 @@ private:
     void Connect(const Address& peer, double now);
     void Disconnect(const std::string& why);
     void ReleaseGate(uint32_t key);
+    // A time on the partner's clock placed on this PC's: by the clocks' difference, taken from the quickest packets (the least
+    // delayed), creeping up slowly when every packet comes later
+    double PartnerTime(double sentAt, double arrivedAt);
 
     Settings settings;
     UdpSocket socket;
@@ -226,6 +232,14 @@ private:
     std::vector<uint8_t> localPose;
     std::vector<uint8_t> partnerPose;
     uint32_t partnerPoseTick = 0;
+    struct PoseSample
+    {
+        double at;
+        std::vector<uint8_t> pose;
+    };
+    std::deque<PoseSample> poses;
+    double clockOffset = 0;
+    bool haveClockOffset = false;
 };
 
 // A cutscene's key from what names it (the director's object, the graph): FNV-1a
