@@ -297,6 +297,26 @@ void GameFrame()
     PlayerState local = LocalState();
     g_Session.Update(now, local);
 
+    // The session's notices in the log too (connected, left...), and the link's round trip every 10 s while connected
+    static std::string lastLogged;
+    if (!g_Session.Notices().empty() && g_Session.Notices().back().text != lastLogged)
+    {
+        lastLogged = g_Session.Notices().back().text;
+        Native::Log("coop: %s", lastLogged.c_str());
+    }
+
+    static double lastRoundTripLog = 0;
+    if (g_Session.Connected() && now - lastRoundTripLog >= 10)
+    {
+        lastRoundTripLog = now;
+        PlayerState partner;
+        bool have = g_Session.Partner(now, &partner);
+        Native::Log("coop: connected to %s, round trip %.0f ms, partner %s at (%.1f, %.1f, %.1f)%s",
+                    g_Session.PartnerName().c_str(), g_Session.RoundTrip() * 1000.0, have ? "seen" : "not seen yet",
+                    partner.position[0], partner.position[1], partner.position[2],
+                    partner.Has(PlayerState::Watching) ? " watching a cutscene" : "");
+    }
+
     // F5: the backpack in and out
     if (Pressed(SDL_SCANCODE_F5))
     {
