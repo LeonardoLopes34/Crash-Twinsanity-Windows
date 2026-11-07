@@ -37,7 +37,8 @@ struct PlayerState
     float position[3] = {0, 0, 0};
     float yaw = 0;
     float rotation[4] = {0, 0, 0, 1}; // the character's turn as the game keeps it (a quaternion)
-    uint16_t model = 0xFFFF;          // the character's model (its OGI's resource), 0xFFFF unknown
+    uint32_t modelSignature = 0;      // the character's model, by what it is (its OGI's joints and bounds: its index in the game's
+                                      // tables differs between PCs), 0 unknown
     uint16_t animation = 0;
     float animationTime = 0;
     uint16_t flags = 0;
@@ -58,6 +59,9 @@ enum class EventKind : uint8_t
     Pull = 7,           // "come here": the receiver goes into the sender's backpack
     World = 8,          // a shared world event (a crate, a pickup, a checkpoint...): kind, id, value
     Text = 9,           // a line to show the other player
+    Pause = 10,         // "I paused": the partner's game pauses too, and only this player resumes
+    Resume = 11,
+    Died = 12,          // "I'm going back to my checkpoint" (the backpack's rider goes too)
 };
 
 // A shared world event: what happened (the game's kinds: coopgame.cpp), the area (its chunk's hash), the instance's ID (the game's,
@@ -168,6 +172,15 @@ public:
     bool PopWorld(WorldEvent* event);
     void SendText(const std::string& text);
 
+    // The pause shared, and the death: told, and taken once each as they came
+    void SendPause() { SendEvent(EventKind::Pause); }
+    void SendResume() { SendEvent(EventKind::Resume); }
+    void SendDied() { SendEvent(EventKind::Died); }
+    bool TakePause() { return Take(&pauseAsked); }
+    bool TakeResume() { return Take(&resumeAsked); }
+    bool TakeDied() { return Take(&diedTold); }
+    bool PausePending() const { return pauseAsked; }
+
     // The HUD's lines (Portuguese)
     const std::deque<Notice>& Notices() const { return notices; }
     void Notify(const std::string& text, double seconds = 4);
@@ -186,6 +199,16 @@ private:
     // A time on the partner's clock placed on this PC's: by the clocks' difference, taken from the quickest packets (the least
     // delayed), creeping up slowly when every packet comes later
     double PartnerTime(double sentAt, double arrivedAt);
+    static bool Take(bool* flag)
+    {
+        bool was = *flag;
+        *flag = false;
+        return was;
+    }
+
+    bool pauseAsked = false;
+    bool resumeAsked = false;
+    bool diedTold = false;
 
     Settings settings;
     UdpSocket socket;

@@ -153,28 +153,57 @@ ModelNode* ModelOf(InstanceContext* instance)
     return instance != nullptr ? static_cast<ModelNode*>(GetGameNode(&instance->nodes, NodeModel)) : nullptr;
 }
 
-// The game's table of models (OGIs) by their resource IDs: an ID's OGI, none when out of the table
-GameOGI* OgiById(u16 id)
+// A model by what it is, the same on both PCs (its index in the game's tables isn't: the tables fill in the order things load):
+// its joints, rigid models and skin, and its bounds
+u32 OgiSignature(const GameOGI* ogi)
 {
-    ResourceTable* models = G_GameResourcesObjectPointer != nullptr ? G_GameResourcesObjectPointer->models : nullptr;
-    if (models == nullptr || id == NoModelId || (id & ResourceIndexMask) >= models->bits.capacity)
+    if (ogi == nullptr)
+    {
+        return 0;
+    }
+
+    u32 hash = 2166136261u;
+    auto mix = [&hash](u32 value) { hash = (hash ^ value) * 16777619u; };
+    mix(ogi->jointCount);
+    mix(ogi->rigidModelCount);
+    mix(ogi->hasSkin);
+    const f32* bounds = &ogi->bounds.min.x;
+    for (int index = 0; index < 8; index++)
+    {
+        u32 bits;
+        std::memcpy(&bits, &bounds[index], sizeof(bits));
+        mix(bits);
+    }
+
+    return hash != 0 ? hash : 1;
+}
+
+// The model here with a signature: among the playable characters' (Crash, Cortex, Nina...), else none
+GameOGI* OgiBySignature(u32 signature)
+{
+    GameController* controller = G_GameController;
+    if (signature == 0 || controller == nullptr)
     {
         return nullptr;
     }
 
-    return static_cast<GameOGI*>(models->items[id & ResourceIndexMask]);
-}
-
-// An OGI's resource ID, when the table has it at that ID (else NoModelId)
-u16 IdOfOgi(GameOGI* ogi)
-{
-    if (ogi == nullptr)
+    for (u32 index = 0; index < GameProgress::Characters; index++)
     {
-        return NoModelId;
+        ModelNode* node = ModelOf(controller->progress.Instance(index));
+        if (node != nullptr && node->ogi != nullptr && OgiSignature(node->ogi) == signature)
+        {
+            return node->ogi;
+        }
     }
 
-    u16 id = static_cast<u16>(ogi->id);
-    return OgiById(id) == ogi ? id : static_cast<u16>(NoModelId);
+    return nullptr;
+}
+
+// Whether the game is in play (or a cutscene, or paused over either): not loading, restarting, dying, on a menu
+bool InPlay(u32 state)
+{
+    return state == GameController::StatePlaying || state == GameController::StateWatching ||
+           state == GameController::StatePaused || state == GameController::StateWaiting;
 }
 
 PlayerState LocalState()
@@ -202,7 +231,7 @@ PlayerState LocalState()
     state.rotation[2] = place->rotation.z;
     state.rotation[3] = place->rotation.w;
     ModelNode* model = ModelOf(player);
-    state.model = model != nullptr ? IdOfOgi(model->ogi) : static_cast<u16>(NoModelId);
+    state.modelSignature = model != nullptr ? OgiSignature(model->ogi) : 0;
     state.area = player->chunk != nullptr && player->chunk->name.string != nullptr ? HashKey(player->chunk->name.string) : 0;
     state.flags = PlayerState::Visible;
     if (gameState == GameController::StateWatching)
@@ -210,13 +239,31 @@ PlayerState LocalState()
         state.flags |= PlayerState::Watching;
     }
 
-    if (gameState == GameController::StateLoadingLevel)
+    // Loading, dying, going back to a checkpoint, on a menu: where the character is now means nothing to the partner
+    if (!InPlay(gameState))
     {
         state.flags |= PlayerState::Loading;
     }
 
     return state;
 }
+
+u32 AreaOfPlayer(const InstanceContext* player)
+{
+    return player != nullptr && player->chunk != nullptr && player->chunk->name.string != nullptr
+               ? HashKey(player->chunk->name.string)
+               : 0;
+}
+
+// The pause shared: who paused (only they resume), and whether this game's pause was the partner's asking
+enum class PausedBy
+{
+    Nobody,
+    Me,
+    Partner,
+};
+PausedBy g_PausedBy = PausedBy::Nobody;
+bool g_PausingForPartner = false;
 
 // The local player's character put at a point (its place moved; the physics follow from it on the next frame)
 void PutPlayerAt(float x, float y, float z)
@@ -242,15 +289,34 @@ struct Puppet
     InstanceContext* instance = nullptr;
     ModelNode* node = nullptr;
     ChunkData* chunk = nullptr;
-    u16 model = NoModelId;
+    u32 signature = 0;
 };
 Puppet g_Puppet;
 
+// Whether the puppet is still the instance made for it (live, and its model node the one made: a chunk let go, its memory may
+// hold another instance at the same address)
+bool PuppetValid()
+{
+    return g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance) &&
+           GetGameNode(&g_Puppet.instance->nodes, NodeModel) == g_Puppet.node;
+}
+
 void HidePuppet()
 {
-    if (g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance))
+    if (PuppetValid())
     {
         g_Puppet.instance->flags.visible = 0;
+    }
+}
+
+// The puppet left to its chunk (hidden; the chunk frees it) and made again when play comes back: a level load, a death, a
+// checkpoint's restart can each free or move what it was made in
+void ForgetPuppet()
+{
+    if (g_Puppet.instance != nullptr)
+    {
+        HidePuppet();
+        g_Puppet = Puppet();
     }
 }
 
@@ -273,11 +339,19 @@ InstanceContext* MakePuppet(ChunkData* chunk, GameOGI* ogi)
 void UpdatePuppet(double now, const PlayerState& local)
 {
     GameController* controller = G_GameController;
+    u32 state = controller != nullptr ? controller->State() : GameController::NoState;
+    // Out of play here (loading, dying, restarting, a menu): forgotten, made again once play is back
+    if (!InPlay(state))
+    {
+        ForgetPuppet();
+        return;
+    }
+
     InstanceContext* player = PlayerInstance();
     PlayerState partner;
     bool show = g_Session.Connected() && g_Session.Partner(now, &partner) && player != nullptr && player->chunk != nullptr &&
-                controller != nullptr && controller->State() == GameController::StatePlaying && partner.area == local.area &&
-                partner.area != 0 && !partner.Has(PlayerState::InBackpack) && !partner.Has(PlayerState::Watching) &&
+                state == GameController::StatePlaying && partner.area == local.area && partner.area != 0 &&
+                !partner.Has(PlayerState::InBackpack) && !partner.Has(PlayerState::Watching) &&
                 !partner.Has(PlayerState::Loading);
     if (!show)
     {
@@ -285,9 +359,9 @@ void UpdatePuppet(double now, const PlayerState& local)
         return;
     }
 
-    // The partner's model, or this player's when it isn't known here
+    // The partner's model found here by what it is, else this player's own (the same character, most of the time)
     ModelNode* own = ModelOf(player);
-    GameOGI* ogi = OgiById(partner.model);
+    GameOGI* ogi = OgiBySignature(partner.modelSignature);
     if (ogi == nullptr)
     {
         ogi = own != nullptr ? own->ogi : nullptr;
@@ -299,29 +373,24 @@ void UpdatePuppet(double now, const PlayerState& local)
         return;
     }
 
-    // Made again when it's gone (its chunk let go of it) or this player is in another chunk (the old one left hidden: its chunk
-    // frees it)
-    bool live = g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance);
-    if (!live || g_Puppet.chunk != player->chunk)
+    // Made again when it's gone or this player is in another chunk (the old one left hidden: its chunk frees it)
+    if (!PuppetValid() || g_Puppet.chunk != player->chunk)
     {
-        if (live)
-        {
-            g_Puppet.instance->flags.visible = 0;
-        }
-
+        ForgetPuppet();
         g_Puppet.instance = MakePuppet(player->chunk, ogi);
         g_Puppet.node = ModelOf(g_Puppet.instance);
         g_Puppet.chunk = player->chunk;
-        g_Puppet.model = partner.model;
-        Native::Log("coop: the partner's puppet made in %s (model %04X, %u joints)",
-                    player->chunk->name.string != nullptr ? player->chunk->name.string : "?", partner.model,
+        g_Puppet.signature = partner.modelSignature;
+        Native::Log("coop: the partner's puppet made in %s (%s model, %u joints)",
+                    player->chunk->name.string != nullptr ? player->chunk->name.string : "?",
+                    OgiBySignature(partner.modelSignature) != nullptr ? "their" : "this player's",
                     static_cast<unsigned>(ogi->jointCount));
     }
-    else if (g_Puppet.node != nullptr && g_Puppet.node->ogi != ogi)
+    else if (g_Puppet.node->ogi != ogi)
     {
-        // The partner switched character (Crash, Cortex, Nina)
+        // The partner switched character (Crash, Cortex, Nina), or the model was let go
         g_Puppet.node->SetOgi(ogi, 0, 0);
-        g_Puppet.model = partner.model;
+        g_Puppet.signature = partner.modelSignature;
     }
 
     // $TWIN_COOP_LOG_SMOOTH (tests): how evenly the puppet moves, frame by frame, logged every 3 s while the partner moves: frames
@@ -672,8 +741,12 @@ void ReleaseBackpack()
 
 void RideInBackpack(double now)
 {
+    // Not while the partner is dying, loading or restarting (where they are then means nothing), nor in another area (each area
+    // has its own space: the same numbers are another place)
     PlayerState partner;
-    if (!g_Session.Partner(now, &partner))
+    InstanceContext* player = PlayerInstance();
+    if (!g_Session.Partner(now, &partner) || partner.Has(PlayerState::Loading) || player == nullptr ||
+        partner.area != AreaOfPlayer(player))
     {
         return;
     }
@@ -686,13 +759,43 @@ void RideInBackpack(double now)
     }
 }
 
-// The world shared: crates and wumpa fruit. The kinds of the world events
+// The world shared: what the players do to things, and what they collect. The kinds of the world events
 enum WorldKind : uint8_t
 {
-    WorldCrateHit = 1, // the player attacked a crate (value: the attack's kind)
+    WorldAttack = 1,      // the player attacked something (a crate, a statue, a creature...): value the attack's kind, and the
+                          // thing's node kind (Shift) above it
     WorldWumpaPickup = 2, // wumpa fruit picked up from a pickup (value: how many; the pickup hidden on the other PC)
     WorldWumpa = 3,       // wumpa fruit from anything else (a crate's own count): value
+    WorldGem = 4,         // a gem found: value its colour, PickupFlag when it came from a pickup (hidden on the other PC)
+    WorldCrystal = 5,     // the level's crystal found: value PickupFlag when it came from a pickup
 };
+constexpr u32 AttackKindShift = 8;
+constexpr u32 PickupFlag = 0x100;
+
+// The agents whose attacks are shared (the playable characters, pickups and projectiles aren't: the characters are each game's own,
+// the pickups go by what's collected, the projectiles are gone at once)
+constexpr NodeKind SharedAgentKinds[] = {NodeCrate, NodeGenericObject, NodeCreature, NodeGrabbable, NodePayGate};
+
+// The shared agent kind an instance has (NodeMovement: none)
+NodeKind SharedKindOf(InstanceContext* instance)
+{
+    for (NodeKind kind : SharedAgentKinds)
+    {
+        if (GetGameNode(&instance->nodes, kind) != nullptr)
+        {
+            return kind;
+        }
+    }
+
+    return NodeMovement;
+}
+
+// How far a thing of a kind may be from where the partner's game had it: what stays put closely, creatures (each game moves its own)
+// further
+float ReachOf(NodeKind kind)
+{
+    return kind == NodeCreature || kind == NodeGrabbable ? 4.0f : 1.0f;
+}
 
 // The crates attacked from the partner's game: the attacks queued here that haven't arrived (not told back), and until when their
 // contents and wumpa fruit are left out
@@ -704,8 +807,6 @@ struct Replayed
 };
 std::map<const InstanceContext*, Replayed> g_Replayed;
 constexpr double ReplayedSeconds = 15;
-// How far an instance may be from where the partner's game had it to be taken for the same one
-constexpr float SameInstanceReach = 1.0f;
 
 u32 AreaOf(const InstanceContext* instance)
 {
@@ -734,7 +835,7 @@ s32 QueryKinds(ChunkData* chunk, u32 kinds, void** results, u16 most)
 }
 
 // The instance of a kind in the player's chunk the partner's event names: the one with its ID, else the nearest within reach
-InstanceContext* FindInstance(const WorldEvent& event, NodeKind kind)
+InstanceContext* FindInstance(const WorldEvent& event, NodeKind kind, float reach = 1.0f)
 {
     InstanceContext* player = PlayerInstance();
     if (player == nullptr || player->chunk == nullptr || AreaOf(player) != event.area)
@@ -746,7 +847,7 @@ InstanceContext* FindInstance(const WorldEvent& event, NodeKind kind)
     void* results[Most];
     s32 count = QueryKinds(player->chunk, 1u << kind, results, Most);
     InstanceContext* nearest = nullptr;
-    float best = SameInstanceReach * SameInstanceReach;
+    float best = reach * reach;
     for (s32 index = 0; index < count; index++)
     {
         auto* instance = static_cast<InstanceContext*>(results[index]);
@@ -846,38 +947,80 @@ void ApplyWorld(double now)
 
         switch (event.kind)
         {
-        case WorldCrateHit:
+        case WorldAttack:
         {
+            auto kind = static_cast<NodeKind>(event.value >> AttackKindShift);
+            u32 attack = event.value & ((1u << AttackKindShift) - 1);
             if (!PlayerNear(event))
             {
-                g_WaitingAttacks.push_back({event, now + WaitingAttackSeconds});
-                Native::Log("coop: the partner's crate at (%.1f, %.1f, %.1f) is far from here: broken when this player comes near",
+                // Kept once (the same thing's same attack again adds nothing)
+                bool kept = false;
+                for (const WaitingAttack& waiting : g_WaitingAttacks)
+                {
+                    kept = kept || (waiting.event.value == event.value && waiting.event.area == event.area &&
+                                    std::fabs(waiting.event.position[0] - event.position[0]) < 0.1f &&
+                                    std::fabs(waiting.event.position[2] - event.position[2]) < 0.1f);
+                }
+
+                if (!kept)
+                {
+                    g_WaitingAttacks.push_back({event, now + WaitingAttackSeconds});
+                    Native::Log("coop: the partner's attack at (%.1f, %.1f, %.1f) is far from here: done when this player comes near",
+                                event.position[0], event.position[1], event.position[2]);
+                }
+
+                break;
+            }
+
+            InstanceContext* target = FindInstance(event, kind, ReachOf(kind));
+            if (target == nullptr)
+            {
+                Native::Log("coop: the partner's attack (node kind %u) at (%.1f, %.1f, %.1f): nothing found here", kind,
                             event.position[0], event.position[1], event.position[2]);
                 break;
             }
 
-            InstanceContext* crate = FindInstance(event, NodeCrate);
-            if (crate == nullptr)
-            {
-                Native::Log("coop: the partner's crate at (%.1f, %.1f, %.1f) not found here", event.position[0], event.position[1],
-                            event.position[2]);
-                break;
-            }
-
-            // Attacked the way the partner's character attacked it, by the partner's puppet (where the partner is: the crate's
-            // script looks at who attacks from where), else by this game's player
-            Replayed& replayed = g_Replayed[crate];
+            // Attacked the way the partner's character attacked it, by the partner's puppet (where the partner is: scripts look at
+            // who attacks from where), else by this game's player
+            Replayed& replayed = g_Replayed[target];
             replayed.queued++;
             replayed.queuedAt = now;
             replayed.until = now + ReplayedSeconds;
             InstanceContext* attacker = PlayerInstance();
-            if (g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance) && g_Puppet.chunk == crate->chunk)
+            if (PuppetValid() && g_Puppet.chunk == target->chunk)
             {
                 attacker = g_Puppet.instance;
             }
 
-            QueueAttack(crate, event.value, attacker, 1u << NodeCrate);
-            WatchCrate(crate, now, "the partner's attack");
+            QueueAttack(target, attack, attacker, 1u << kind);
+            if (kind == NodeCrate)
+            {
+                WatchCrate(target, now, "the partner's attack");
+            }
+
+            break;
+        }
+        case WorldGem:
+        case WorldCrystal:
+        {
+            // Found here too (the same progress mark and HUD as the partner's pickup), the pickup hidden
+            if (event.kind == WorldGem)
+            {
+                AwardGem(static_cast<int>(event.value & 0xFF));
+            }
+            else
+            {
+                AwardCrystal();
+            }
+
+            InstanceContext* pickup = (event.value & PickupFlag) != 0 ? FindInstance(event, NodePickup, 1.5f) : nullptr;
+            if (pickup != nullptr)
+            {
+                CallVirtual<u32>(pickup, pickup->vtable, ReferencedObject::SleepSlot);
+            }
+
+            Native::Log("coop: the partner found %s%s", event.kind == WorldGem ? "a gem" : "the crystal",
+                        pickup != nullptr ? " (its pickup hidden here)" : "");
             break;
         }
         case WorldWumpaPickup:
@@ -890,7 +1033,7 @@ void ApplyWorld(double now)
             }
 
             // The pickup the partner took: put to sleep here (out of sight and out of reach)
-            InstanceContext* pickup = event.kind == WorldWumpaPickup ? FindInstance(event, NodePickup) : nullptr;
+            InstanceContext* pickup = event.kind == WorldWumpaPickup ? FindInstance(event, NodePickup, 1.0f) : nullptr;
             if (pickup != nullptr)
             {
                 CallVirtual<u32>(pickup, pickup->vtable, ReferencedObject::SleepSlot);
@@ -1280,6 +1423,52 @@ void GameFrame()
         }
     }
 
+    // The game's state changing: a death (or a checkpoint's restart) told the partner; the pause told, or taken for the partner's
+    GameController* controller = G_GameController;
+    u32 state = controller != nullptr ? controller->State() : GameController::NoState;
+    static u32 lastState = GameController::NoState;
+    if (state != lastState)
+    {
+        if (state == GameController::StateFadingOut && InPlay(lastState))
+        {
+            g_Session.SendDied();
+            Native::Log("coop: back to the checkpoint (told the partner)");
+        }
+
+        bool pausedNow = state == GameController::StatePaused || state == GameController::StateGallery;
+        bool pausedBefore = lastState == GameController::StatePaused || lastState == GameController::StateGallery;
+        if (pausedNow && !pausedBefore)
+        {
+            g_PausedBy = g_PausingForPartner ? PausedBy::Partner : PausedBy::Me;
+            if (g_PausedBy == PausedBy::Me)
+            {
+                g_Session.SendPause();
+            }
+
+            Native::Log("coop: paused (%s)", g_PausedBy == PausedBy::Me ? "by this player" : "by the partner");
+        }
+        else if (!pausedNow && pausedBefore)
+        {
+            if (g_PausedBy == PausedBy::Me)
+            {
+                g_Session.SendResume();
+            }
+
+            g_PausedBy = PausedBy::Nobody;
+            Native::Log("coop: resumed");
+        }
+
+        g_PausingForPartner = false;
+        lastState = state;
+    }
+
+    // The carrier went back to their checkpoint: the backpack's rider goes back to theirs too (the two come back together)
+    if (g_Session.TakeDied() && g_Backpack.applied && controller != nullptr && InPlay(state))
+    {
+        controller->RestartFromCheckpoint();
+        g_Session.Notify("Co-op: " + g_Session.PartnerName() + " morreu: voltando ao checkpoint junto", 4);
+    }
+
     ApplyWorld(now);
     TestCrate(now, connectedAt);
     TestPickup(now, connectedAt);
@@ -1299,19 +1488,15 @@ void GameFrame()
 
 void AgentAttacked(InstanceContext* instance, unsigned kind, InstanceContext* sender)
 {
-    if (!g_Session.Connected() || instance == nullptr || GetGameNode(&instance->nodes, NodeCrate) == nullptr)
+    if (!g_Session.Connected() || instance == nullptr)
     {
         return;
     }
 
-    static u32 logged = 0;
-    if (logged < 20)
+    NodeKind shared = SharedKindOf(instance);
+    if (shared == NodeMovement)
     {
-        logged++;
-        Vector4 at = PositionOfInstance(instance);
-        Native::Log("coop: crate at (%.1f, %.1f, %.1f) attacked (kind %u) by %s, signals %u", at.x, at.y, at.z, kind,
-                    sender == PlayerInstance() ? "the player" : "something else",
-                    static_cast<unsigned>(instance->flags.receivesTriggerSignals));
+        return;
     }
 
     // An attack this game queued for the partner's: arrived, not told back
@@ -1322,12 +1507,86 @@ void AgentAttacked(InstanceContext* instance, unsigned kind, InstanceContext* se
         return;
     }
 
-    if (sender == nullptr || sender != PlayerInstance())
+    // Only the player's own, on things that take hits (the flat crates laid on the ground and the like don't)
+    if (sender == nullptr || sender != PlayerInstance() || instance->flags.receivesTriggerSignals == 0)
     {
         return;
     }
 
-    g_Session.SendWorld(EventAbout(WorldCrateHit, instance, kind));
+    // The same thing's same attack again within a moment (standing on it, a spin's several touches): once
+    static std::map<std::pair<const InstanceContext*, unsigned>, double> lastSent;
+    double now = Now();
+    double& last = lastSent[{instance, kind}];
+    if (now - last < 0.3)
+    {
+        return;
+    }
+
+    last = now;
+    if (lastSent.size() > 256)
+    {
+        lastSent.clear();
+    }
+
+    Vector4 at = PositionOfInstance(instance);
+    Native::Log("coop: the player's attack %u on a thing of node kind %u at (%.1f, %.1f, %.1f): told the partner", kind, shared,
+                at.x, at.y, at.z);
+    g_Session.SendWorld(EventAbout(WorldAttack, instance, kind | (static_cast<u32>(shared) << AttackKindShift)));
+}
+
+// A gem or the crystal found by this player (commandsgame.cpp's AddGem and AddCrystal): told the partner, unless it's the partner's
+// own being made here (AwardGem, AwardCrystal)
+bool g_Awarding = false;
+
+void CollectibleFound(bool gem, int colour, InstanceContext* from)
+{
+    if (!g_Session.Connected() || g_Awarding)
+    {
+        return;
+    }
+
+    bool pickup = from != nullptr && GetGameNode(&from->nodes, NodePickup) != nullptr;
+    u32 value = (gem ? static_cast<u32>(colour) & 0xFF : 0) | (pickup ? PickupFlag : 0);
+    g_Session.SendWorld(EventAbout(gem ? WorldGem : WorldCrystal, from, value));
+    Native::Log("coop: %s found: told the partner", gem ? "a gem" : "the crystal");
+}
+
+// Bodies held back for a cutscene's wait (behaviours.cpp), by their level
+struct HeldEntry
+{
+    const GraphState* state;
+    StateBody* body;
+    int way;
+};
+std::map<const BehaviourLevel*, HeldEntry> g_Held;
+
+StateBody* HeldBody(const BehaviourLevel* level, const GraphState* state, int* way)
+{
+    auto found = g_Held.find(level);
+    if (found == g_Held.end())
+    {
+        return nullptr;
+    }
+
+    // The level moved on (another state, a level unwound): forgotten
+    if (found->second.state != state)
+    {
+        g_Held.erase(found);
+        return nullptr;
+    }
+
+    *way = found->second.way;
+    return found->second.body;
+}
+
+void HoldBody(const BehaviourLevel* level, const GraphState* state, StateBody* body, int way)
+{
+    g_Held[level] = {state, body, way};
+}
+
+void ReleaseHeldBody(const BehaviourLevel* level)
+{
+    g_Held.erase(level);
 }
 
 bool SuppressesCrateContents(const InstanceContext* crate)
@@ -1357,6 +1616,35 @@ bool WumpaPicked(InstanceContext* from, unsigned count)
     bool pickup = GetGameNode(&from->nodes, NodePickup) != nullptr;
     g_Session.SendWorld(EventAbout(pickup ? WorldWumpaPickup : WorldWumpa, from, count));
     return false;
+}
+
+bool TakePartnerPause()
+{
+    if (!g_Session.Connected() || !g_Session.TakePause())
+    {
+        return false;
+    }
+
+    g_PausingForPartner = true;
+    return true;
+}
+
+bool TakePartnerResume()
+{
+    // A resume for a pause that wasn't the partner's (both paused at once): this player's own stands
+    bool resume = g_Session.TakeResume();
+    return resume && g_PausedBy == PausedBy::Partner;
+}
+
+bool BlocksResume()
+{
+    if (!g_Session.Connected() || g_PausedBy != PausedBy::Partner)
+    {
+        return false;
+    }
+
+    g_Session.Notify("So " + g_Session.PartnerName() + " pode despausar", 3);
+    return true;
 }
 
 bool HidesShadow(const InstanceContext* instance)
@@ -1434,7 +1722,7 @@ bool ModelDrawn(ModelNode* node)
     }
 
     // The partner's puppet: posed as the partner's character, when the pose is for its model's joints
-    if (node == g_Puppet.node && g_Puppet.instance != nullptr && InstanceLive(g_Puppet.instance))
+    if (node == g_Puppet.node && PuppetValid())
     {
         u32 count = JointsWritten(node->drawnAnimator, node->drawnOgi);
         // The two poses around the moment the puppet is placed at, blended (the same moment as its place: Session::Partner)

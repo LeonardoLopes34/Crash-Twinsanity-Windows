@@ -368,8 +368,14 @@ void ShowGemWidget(OLEG* oleg)
 }
 
 // The gem of the level play is in found, shown on the HUD in its colour
-void AddGemCommand::ExecuteOn(GameNode*)
+void AddGemCommand::ExecuteOn(GameNode* node)
 {
+#ifdef TWIN_NATIVE
+    // Online co-op: told the partner's game (coop/coopgame.cpp)
+    Coop::CollectibleFound(true, gem, node != nullptr ? node->owner : nullptr);
+#else
+    (void)node;
+#endif
     GameController* controller = G_GameController;
     OLEG* oleg = &controller->oleg;
     MarkGem(reinterpret_cast<u8*>(CurrentLevel(&controller->progress)), static_cast<u32>(gem));
@@ -380,14 +386,39 @@ void AddGemCommand::ExecuteOn(GameNode*)
 }
 
 // The crystal of the level play is in found, shown on the HUD
-void AddCrystalCommand::ExecuteOn(GameNode*)
+void AddCrystalCommand::ExecuteOn(GameNode* node)
 {
+#ifdef TWIN_NATIVE
+    Coop::CollectibleFound(false, 0, node != nullptr ? node->owner : nullptr);
+#else
+    (void)node;
+#endif
     GameController* controller = G_GameController;
     OLEG* oleg = &controller->oleg;
     MarkCrystal(CurrentLevel(&controller->progress));
     oleg->pickupSprite = OLEG::SpritePickupCrystal;
     ShowGemWidget(oleg);
 }
+
+#ifdef TWIN_NATIVE
+// Online co-op: the partner's gem and crystal found here, as AddGem and AddCrystal do (not told back)
+void Coop::AwardGem(int colour)
+{
+    Coop::g_Awarding = true;
+    AddGemCommand command = {};
+    command.gem = colour;
+    command.AddGemCommand::ExecuteOn(nullptr);
+    Coop::g_Awarding = false;
+}
+
+void Coop::AwardCrystal()
+{
+    Coop::g_Awarding = true;
+    AddCrystalCommand command = {};
+    command.AddCrystalCommand::ExecuteOn(nullptr);
+    Coop::g_Awarding = false;
+}
+#endif
 
 // The played character's part gets a hit point, at most 3: a fourth makes it invincible
 void PickUpHealthCommand::ExecuteOn(GameNode*)

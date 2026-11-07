@@ -43,6 +43,7 @@
 #include <cstdint>
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "ui/nativeui.h"
 #endif
 
@@ -1343,6 +1344,13 @@ u32 GameController::FadingOut(TimeClock*)
 
 u32 GameController::Paused(TimeClock* clock)
 {
+#ifdef TWIN_NATIVE
+    // Online co-op: the partner resumed the pause they made, so this game resumes too; and this player can't resume theirs
+    // (coop/coopgame.cpp)
+    bool partnerResumed = Coop::TakePartnerResume();
+    if (!partnerResumed)
+    {
+#endif
     if (PauseReason(clock, 1) == 0)
     {
         return NoState;
@@ -1353,6 +1361,14 @@ u32 GameController::Paused(TimeClock* clock)
     {
         return NoState;
     }
+#ifdef TWIN_NATIVE
+    if (Coop::BlocksResume())
+    {
+        BackToPauseMenu();
+        return NoState;
+    }
+    }
+#endif
 
     oleg.Hide(oleg.screens[OLEG::ScreenAllButOverlays], static_cast<s32>(g_ClockUnitsPerSecond * FadeSeconds), 0);
     if (states.returnState == StateWatching)
@@ -2089,6 +2105,12 @@ u32 GameController::PauseReason(TimeClock*, u32 paused)
 #ifdef TWIN_NATIVE
             // The window lost the focus (the option on): the game's own pause, as its start button
             if (next == ReasonNone && NativeUi::TakeFocusPause())
+            {
+                next = ReasonStart;
+            }
+
+            // Online co-op: the partner paused, so this game does too (coop/coopgame.cpp)
+            if (next == ReasonNone && Coop::TakePartnerPause())
             {
                 next = ReasonStart;
             }

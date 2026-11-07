@@ -12,7 +12,7 @@
 namespace Coop
 {
 constexpr uint32_t Magic = 0x4F435754; // "TWCO"
-constexpr uint16_t ProtocolVersion = 3;
+constexpr uint16_t ProtocolVersion = 4;
 constexpr uint16_t DefaultPort = 27420;
 constexpr size_t MostPacket = 1200;
 

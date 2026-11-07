@@ -270,6 +270,35 @@ GraphState* ExecuteState(GraphState* state, BehaviourRunner* runner, BehaviourLe
     u32 completion = bits.hasCompletion;
     g_CheckedBody = nullptr;
     g_CheckedCondition = nullptr;
+#ifdef TWIN_NATIVE
+    // Online co-op: a completion body or a state's own body held back for a cutscene's wait (coop/coopgame.cpp), run as it would
+    // have been once the partner is there
+    int heldWay = 0;
+    if (StateBody* held = Coop::HeldBody(level, state, &heldWay))
+    {
+        if (Coop::HoldsBody(held, runner, level))
+        {
+            return state;
+        }
+
+        Coop::ReleaseHeldBody(level);
+        if (heldWay == Coop::HeldCompletion)
+        {
+            level->entered = state;
+            GraphState* next = RunBody(held, clock, runner, level);
+            return StartPacket(next, runner);
+        }
+
+        GraphState* next = RunBody(held, clock, runner, level);
+        if (next != nullptr)
+        {
+            StartPacket(next, runner);
+        }
+
+        level->entered = level->state;
+        return next;
+    }
+#endif
     if (packet != nullptr && ended == packet)
     {
         // The state's packet ended: the completion body runs
@@ -278,6 +307,13 @@ GraphState* ExecuteState(GraphState* state, BehaviourRunner* runner, BehaviourLe
             return nullptr;
         }
 
+#ifdef TWIN_NATIVE
+        if (Coop::HoldsBody(state->bodies, runner, level))
+        {
+            Coop::HoldBody(level, state, state->bodies, Coop::HeldCompletion);
+            return state;
+        }
+#endif
         level->entered = state;
         GraphState* next = RunBody(state->bodies, clock, runner, level);
         return StartPacket(next, runner);
@@ -318,6 +354,13 @@ GraphState* ExecuteState(GraphState* state, BehaviourRunner* runner, BehaviourLe
         }
 
         StateBody* fallback = level->elseBody;
+#ifdef TWIN_NATIVE
+        // (The else body is asked about again every frame on its own: held by not running it now)
+        if (fallback != nullptr && Coop::HoldsBody(fallback, runner, level))
+        {
+            return state;
+        }
+#endif
         if (fallback != nullptr)
         {
             GraphState* next = RunBody(fallback, clock, runner, level);
@@ -356,6 +399,13 @@ GraphState* ExecuteState(GraphState* state, BehaviourRunner* runner, BehaviourLe
         return nullptr;
     }
 
+#ifdef TWIN_NATIVE
+    if (Coop::HoldsBody(state->bodies, runner, level))
+    {
+        Coop::HoldBody(level, state, state->bodies, Coop::HeldOwn);
+        return state;
+    }
+#endif
     GraphState* next = RunBody(state->bodies, clock, runner, level);
     if (next != nullptr)
     {

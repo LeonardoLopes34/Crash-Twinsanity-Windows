@@ -142,6 +142,10 @@ void Session::Disconnect(const std::string& why)
     partnerPoseTick = 0;
     poses.clear();
     haveClockOffset = false;
+    // The partner's pause let go of (gone: they can't resume it)
+    pauseAsked = false;
+    resumeAsked = true;
+    diedTold = false;
     // Alone again: out of the backpack, and a held cutscene goes on solo
     if (inBackpack)
     {
@@ -246,7 +250,7 @@ void Session::SendState(const PlayerState& local)
         writer.F32(value);
     }
 
-    writer.U16(state.model);
+    writer.U32(state.modelSignature);
     writer.U16(state.animation);
     writer.F32(state.animationTime);
     writer.U16(state.flags);
@@ -368,7 +372,7 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
             value = reader.F32();
         }
 
-        state.model = reader.U16();
+        state.modelSignature = reader.U32();
         state.animation = reader.U16();
         state.animationTime = reader.F32();
         state.flags = reader.U16();
@@ -595,6 +599,18 @@ void Session::HandleEvent(const uint8_t* data, size_t size, double at)
     case EventKind::Pull:
         pulled = true;
         Notify(partnerName + " puxou você até ele", 3);
+        break;
+    case EventKind::Pause:
+        pauseAsked = true;
+        resumeAsked = false;
+        Notify(partnerName + " pausou o jogo", 4);
+        break;
+    case EventKind::Resume:
+        resumeAsked = true;
+        pauseAsked = false;
+        break;
+    case EventKind::Died:
+        diedTold = true;
         break;
     default:
         break;
