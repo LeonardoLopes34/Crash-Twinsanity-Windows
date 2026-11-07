@@ -6,6 +6,7 @@ struct StateBody;
 struct BehaviourRunner;
 struct BehaviourLevel;
 struct ModelNode;
+struct InstanceContext;
 
 namespace Coop
 {
@@ -21,6 +22,9 @@ bool Active();
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level);
 
 // A model node about to be drawn with its animator's joints (ogi.cpp's ModelNode::Draw): the local player's pose taken to send,
-// the partner's puppet given the partner's pose
-void ModelDrawn(ModelNode* node);
+// the partner's puppet given the partner's pose. True when it isn't to be drawn (the local player riding in the backpack)
+bool ModelDrawn(ModelNode* node);
+
+// Whether an instance's shadow isn't cast (shadows.cpp's ShadowNode::Update): the local player riding in the backpack
+bool HidesShadow(const InstanceContext* instance);
 }

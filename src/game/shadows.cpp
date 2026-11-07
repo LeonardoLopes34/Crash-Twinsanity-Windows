@@ -13,6 +13,10 @@
 #include "platform/graphics.h"
 #include "retail/libc.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 extern "C"
 {
     extern const GccVTableEntry g_ShadowNodeVTable[] RETAIL(D_002F9B90);
@@ -340,6 +344,14 @@ u32 ShadowNode::Update(TimeClock* clock)
     {
         return GameNode::Update(clock);
     }
+
+#ifdef TWIN_NATIVE
+    // Online co-op: the player riding in the partner's backpack casts none (it isn't drawn: coop/coopgame.cpp)
+    if (Coop::HidesShadow(instance))
+    {
+        return GameNode::Update(clock);
+    }
+#endif
 
     ShadowSlot* slot = slots[bits.slot];
     if (slot == nullptr)

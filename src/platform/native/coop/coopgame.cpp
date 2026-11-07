@@ -46,10 +46,7 @@ Session g_Session;
 bool g_Started = false;
 bool g_ShowingText = false;
 std::string g_ShownText;
-// The backpack's ride: behind and above the partner
-constexpr float BackpackBehind = 0.6f;
-constexpr float BackpackUp = 0.9f;
-// Coming out: beside the partner
+// Coming out of the backpack: beside the partner
 constexpr float LeaveSide = 1.2f;
 
 std::map<std::string, std::string> ReadIni()
@@ -498,6 +495,73 @@ u32 JointsWritten(const OgiAnimator* animator, const GameOGI* ogi)
     return count;
 }
 
+// The backpack as this game has it: the player's character hidden (ModelDrawn), its pad taken (kept to give back), its events off
+// (no hits, no pickups: the partner's game has them) and carried where the partner is, its own camera following it
+struct BackpackHold
+{
+    bool applied = false;
+    InstanceContext* instance = nullptr;
+    GamePad* pad = nullptr;
+};
+BackpackHold g_Backpack;
+
+PlayerCharacter* CharacterOf(InstanceContext* instance)
+{
+    auto* node = instance != nullptr ? static_cast<PlayerNode*>(GetGameNode(&instance->nodes, NodeCharacter)) : nullptr;
+    return node != nullptr ? node->character : nullptr;
+}
+
+ControlsNode* ControlsOf(InstanceContext* instance)
+{
+    return instance != nullptr ? static_cast<ControlsNode*>(GetGameNode(&instance->nodes, NodeControls)) : nullptr;
+}
+
+void ApplyBackpack(InstanceContext* player)
+{
+    ControlsNode* controls = ControlsOf(player);
+    PlayerCharacter* character = CharacterOf(player);
+    if (controls == nullptr || character == nullptr)
+    {
+        return;
+    }
+
+    g_Backpack.applied = true;
+    g_Backpack.instance = player;
+    g_Backpack.pad = controls->pad;
+    controls->pad = nullptr;
+    character->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+    character->eventFlags.eventsOff = 1;
+    Native::Log("coop: into the partner's backpack");
+}
+
+void ReleaseBackpack()
+{
+    if (!g_Backpack.applied)
+    {
+        return;
+    }
+
+    // The character given back only when it's still the one played (a level load may have made another)
+    InstanceContext* player = PlayerInstance();
+    if (player == g_Backpack.instance && InstanceLive(player))
+    {
+        ControlsNode* controls = ControlsOf(player);
+        PlayerCharacter* character = CharacterOf(player);
+        if (controls != nullptr && controls->pad == nullptr)
+        {
+            controls->pad = g_Backpack.pad;
+        }
+
+        if (character != nullptr)
+        {
+            character->eventFlags.eventsOff = 0;
+        }
+    }
+
+    g_Backpack = BackpackHold();
+    Native::Log("coop: out of the backpack");
+}
+
 void RideInBackpack(double now)
 {
     PlayerState partner;
@@ -506,9 +570,36 @@ void RideInBackpack(double now)
         return;
     }
 
-    float behindX = -std::sin(partner.yaw) * BackpackBehind;
-    float behindZ = -std::cos(partner.yaw) * BackpackBehind;
-    PutPlayerAt(partner.position[0] + behindX, partner.position[1] + BackpackUp, partner.position[2] + behindZ);
+    PutPlayerAt(partner.position[0], partner.position[1], partner.position[2]);
+    PlayerCharacter* character = CharacterOf(PlayerInstance());
+    if (character != nullptr)
+    {
+        character->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+}
+
+// The backpack's state in the session made this game's: applied or released as it changes, kept up while in it
+void BackpackFrame(double now)
+{
+    InstanceContext* player = PlayerInstance();
+    GameController* controller = G_GameController;
+    bool playing = controller != nullptr && controller->State() == GameController::StatePlaying;
+    bool wanted = g_Session.InBackpack() && player != nullptr;
+    // A new character to play (a level loaded, a switch): the hold made again on it
+    if (g_Backpack.applied && (player != g_Backpack.instance || !wanted))
+    {
+        ReleaseBackpack();
+    }
+
+    if (wanted && !g_Backpack.applied && playing)
+    {
+        ApplyBackpack(player);
+    }
+
+    if (g_Backpack.applied && playing)
+    {
+        RideInBackpack(now);
+    }
 }
 
 void LeaveBesidePartner(double now)
@@ -665,11 +756,29 @@ void GameFrame()
         g_Session.EnterBackpack();
     }
 
-    if (g_Session.InBackpack())
+    // $TWIN_COOP_TEST_BACKPACK="in,out" (tests): into the backpack that many seconds after connecting, out again at the second
+    static const char* testBackpack = std::getenv("TWIN_COOP_TEST_BACKPACK");
+    static double connectedAt = -1;
+    connectedAt = g_Session.Connected() ? (connectedAt < 0 ? now : connectedAt) : -1;
+    if (testBackpack != nullptr && connectedAt >= 0)
     {
-        RideInBackpack(now);
+        static int stage = 0;
+        double inAt = std::atof(testBackpack);
+        const char* comma = std::strchr(testBackpack, ',');
+        double outAt = comma != nullptr ? std::atof(comma + 1) : 1e9;
+        if (stage == 0 && now - connectedAt >= inAt && g_Session.EnterBackpack())
+        {
+            stage = 1;
+        }
+        else if (stage == 1 && now - connectedAt >= outAt)
+        {
+            g_Session.LeaveBackpack();
+            LeaveBesidePartner(now);
+            stage = 2;
+        }
     }
 
+    BackpackFrame(now);
     UpdatePuppet(now, local);
 
     // The HUD: the cutscene's wait first, else the session's latest notice (connected, left...)
@@ -682,23 +791,33 @@ void GameFrame()
     ShowLine(line);
 }
 
+bool HidesShadow(const InstanceContext* instance)
+{
+    return g_Backpack.applied && instance == g_Backpack.instance;
+}
+
 bool Active()
 {
     StartOnce();
     return g_Session.GetRole() != Role::Off;
 }
 
-void ModelDrawn(ModelNode* node)
+bool ModelDrawn(ModelNode* node)
 {
     if (g_Session.GetRole() == Role::Off || node == nullptr)
     {
-        return;
+        return false;
     }
 
-    // This player's character: its pose taken for the next state packet
+    // This player's character: its pose taken for the next state packet; not drawn while it rides in the backpack
     InstanceContext* player = PlayerInstance();
     if (player != nullptr && node == ModelOf(player))
     {
+        if (g_Backpack.applied)
+        {
+            return true;
+        }
+
         u32 count = JointsWritten(node->drawnAnimator, node->drawnOgi);
         if (count != 0)
         {
@@ -715,7 +834,7 @@ void ModelDrawn(ModelNode* node)
             }
         }
 
-        return;
+        return false;
     }
 
     // The partner's puppet: posed as the partner's character, when the pose is for its model's joints
@@ -727,6 +846,8 @@ void ModelDrawn(ModelNode* node)
             UnpackPose(g_Session.PartnerPose(), node->drawnAnimator->matrices.start, count);
         }
     }
+
+    return false;
 }
 
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level)

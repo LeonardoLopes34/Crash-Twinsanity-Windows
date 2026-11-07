@@ -377,10 +377,13 @@ void ModelNode::Draw(const Matrix4x4* matrix, const Matrix4x4* chunkMatrix, Chun
     {
         GatherStrongestLights(lights, chunkMatrix, lighting);
 #ifdef TWIN_NATIVE
-        // Online co-op: the player's pose taken, the partner's puppet posed (coop/coopgame.cpp)
-        if (drawnAnimator != nullptr)
+        // Online co-op: the player's pose taken, the partner's puppet posed, the player riding in the backpack not drawn
+        // (coop/coopgame.cpp)
+        if (drawnAnimator != nullptr && Coop::ModelDrawn(this))
         {
-            Coop::ModelDrawn(this);
+            drawnOgi = nullptr;
+            drawnAnimator = nullptr;
+            return;
         }
 #endif
         if (drawnAnimator == nullptr)

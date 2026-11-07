@@ -47,10 +47,12 @@ Sem `coop.ini` o jogo é o original.
 Teste num PC só: `--quick` vai direto para a praia, e `TWIN_COOP_TEST_OFFSET=3` no host desloca a posição enviada para o
 boneco não ficar dentro do outro Crash.
 
+| **Mochila de verdade**: quem entra fica invisível (modelo e sombra), sem controle, imune a dano e a itens, e é levado na posição do parceiro com a própria câmera; ao sair, reaparece ao lado. Testada em 2026-11-07 com duas janelas (`TWIN_COOP_TEST_BACKPACK=15,40`: entra aos 15 s de conexão, sai aos 40) | `coop/coopgame.cpp` (`BackpackFrame`), ganchos em `ogi.cpp` e `shadows.cpp` |
+
 ## Próximos passos
 
 1. Testar o boneco andando, pulando e girando (precisa de alguém jogando numa das janelas).
-2. **Esconder o personagem na mochila** (hoje ele só é levado junto, atrás do parceiro) e desligar a colisão dele.
+2. Mostrar na mochila algo nas costas de quem carrega (como a máscara do Mind over Mutant), e dar sombra ao boneco do parceiro.
 3. **Eventos do mundo** pelo host: caixas, Wumpa, máscaras, checkpoints, troca de fase (`Session::SendWorld`).
 4. **Carbon Crash**: recolorir só a instância do P2.
 5. **Câmera livre** (opção): ignorar os gatilhos de câmera (`SetFollowCameraIgnoresTriggers`) e a recentralização.
