@@ -13,6 +13,9 @@ namespace Coop
 // pull applied, the HUD's line
 void GameFrame();
 
+// Whether online co-op is on (asked for, whether or not the partner is there)
+bool Active();
+
 // A script body about to run (behaviours.cpp's ExecuteState, the body that passed): true to keep the script where it is this
 // frame, because the body starts a cutscene (CutsceneStart, command 589) and the partner isn't there yet
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level);

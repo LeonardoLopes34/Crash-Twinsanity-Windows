@@ -8,6 +8,7 @@
 
 #include "native.h"
 #include "audio/volumes.h"
+#include "coop/coop.h"
 
 #include <SDL3/SDL.h>
 
@@ -371,7 +372,9 @@ void StartOptions()
 
 bool TakeFocusPause()
 {
-    return IsOn(OptionPauseOnFocusLoss) && g_FocusPauseDue.exchange(false);
+    // Online co-op: the game goes on when the window loses the focus (the partner's doesn't stop)
+    bool due = g_FocusPauseDue.exchange(false);
+    return due && IsOn(OptionPauseOnFocusLoss) && !Coop::Active();
 }
 
 void BeginCapture()

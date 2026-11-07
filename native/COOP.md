@@ -41,10 +41,15 @@ Sem `coop.ini` o jogo é o original.
 | Aviso na parte de baixo da tela ("Aguardando Jogador 2...") com o texto do próprio jogo | `coop/coopgame.cpp` |
 | Teste de conexão sem o jogo (`coopprobe`) e autoteste das regras (`coop_selftest`) | `native/coop-tests/` |
 
-## Próximos passos (precisam do jogo rodando para validar)
+| **Ver o parceiro**: um boneco com o modelo do personagem dele (só o modelo, sem física nem scripts), na posição e rotação dele, com a pose dos 51 ossos enviada pela rede (872 bytes, 30/s) e aplicada antes de desenhar. Testado em 2026-11-07 com duas janelas: o boneco aparece na praia na mesma pose do Crash original | `coop/coopgame.cpp` (`UpdatePuppet`, `ModelDrawn`), gancho em `src/game/ogi.cpp` |
+| O jogo não pausa ao perder o foco durante o co-op | `ui/options.cpp` |
 
-1. **Ver o parceiro**: criar uma instância "fantoche" do Crash e colocá-la a cada frame no estado de `Session::Partner`
-   (posição, rotação, animação). Hoje a posição já chega; falta desenhar.
+Teste num PC só: `--quick` vai direto para a praia, e `TWIN_COOP_TEST_OFFSET=3` no host desloca a posição enviada para o
+boneco não ficar dentro do outro Crash.
+
+## Próximos passos
+
+1. Testar o boneco andando, pulando e girando (precisa de alguém jogando numa das janelas).
 2. **Esconder o personagem na mochila** (hoje ele só é levado junto, atrás do parceiro) e desligar a colisão dele.
 3. **Eventos do mundo** pelo host: caixas, Wumpa, máscaras, checkpoints, troca de fase (`Session::SendWorld`).
 4. **Carbon Crash**: recolorir só a instância do P2.

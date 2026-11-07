@@ -682,6 +682,12 @@ void GameFrame()
     ShowLine(line);
 }
 
+bool Active()
+{
+    StartOnce();
+    return g_Session.GetRole() != Role::Off;
+}
+
 void ModelDrawn(ModelNode* node)
 {
     if (g_Session.GetRole() == Role::Off || node == nullptr)
