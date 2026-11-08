@@ -286,6 +286,29 @@ void Session::Handle(const Address& from, const uint8_t* data, size_t size, doub
     PacketKind kind;
     if (!ReadHeader(&reader, &kind))
     {
+        // Another version of the co-op (the same magic, another protocol): said on the screen, and told back once in a while so the
+        // other game says it too (each version only reads its own packets)
+        Reader peek(data, size);
+        uint32_t magic = peek.U32();
+        uint16_t version = peek.U16();
+        if (peek.Ok() && magic == Magic && version != ProtocolVersion)
+        {
+            static double lastSaid = -100;
+            if (at - lastSaid >= 5.0)
+            {
+                lastSaid = at;
+                bool older = version < ProtocolVersion;
+                Notify(std::string("Co-op: o outro jogo e de outra versao (") + (older ? "mais antiga" : "mais nova") +
+                           ") - usem os dois a mesma pasta/zip",
+                       6);
+                // A header of this version and nothing else: the other game takes it for another version's too
+                std::vector<uint8_t> said;
+                Writer writer(&said);
+                WriteHeader(&writer, PacketKind::Bye);
+                socket.Send(from, said.data(), said.size());
+            }
+        }
+
         return;
     }
 
