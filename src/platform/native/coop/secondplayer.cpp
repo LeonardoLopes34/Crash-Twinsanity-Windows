@@ -1060,6 +1060,183 @@ InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
     return squared(from->place, second->place) < squared(from->place, played->place) ? second : played;
 }
 
+// "The player" for each thing the world steps (instances.cpp's ChunkInstances::Update, around each node's update): the game asks
+// for the player everywhere (g_PlayerInstance, the progress's character played: a pickup flying to it, a worm launching it, an
+// enemy hunting it, a trigger starting a cutscene, its own scripts), and only ever had one. While a node of an instance nearer the
+// second player steps (or one of the second player's own), both point at the second player; given back after it. The first
+// player's own nodes, and everything while the second rides in the backpack, see the first as always
+namespace
+{
+Reference* g_SecondRef = nullptr;
+InstanceContext* g_SecondRefFor = nullptr;
+Reference* g_SavedPlayer = nullptr;
+Reference* g_SavedCharacter = nullptr;
+u32 g_SavedSlot = 0;
+bool g_Swapped = false;
+// The player's character and its part, kept twice by the game (player.h: the scripts' conditions, the node controllers' looks and
+// animations, a worm's "the player stands on me"): the second player's for the same steps
+PlayerCharacter* g_SavedCharacters[2] = {nullptr, nullptr};
+CharacterPart* g_SavedParts[2] = {nullptr, nullptr};
+PlayerCharacter* g_SecondCharacter = nullptr;
+CharacterPart* g_SecondPart = nullptr;
+
+// Once a frame: the reference to the second player kept (taken again when it's another, let go when it's gone)
+void KeepSecondRef()
+{
+    InstanceContext* second = SecondPlayer();
+    auto* node = second != nullptr ? static_cast<PlayerNode*>(GetGameNode(&second->nodes, NodeCharacter)) : nullptr;
+    g_SecondCharacter = node != nullptr ? node->character : nullptr;
+    g_SecondPart = g_SecondCharacter != nullptr ? static_cast<CharacterPart*>(g_SecondCharacter->part) : nullptr;
+    if (second == g_SecondRefFor)
+    {
+        return;
+    }
+
+    if (g_SecondRef != nullptr)
+    {
+        RemoveReference(&g_SecondRef);
+        g_SecondRef = nullptr;
+    }
+
+    g_SecondRefFor = second;
+    g_SecondRef = second != nullptr ? AddReference(second) : nullptr;
+}
+
+float SquaredBetween(ObjectPlace* a, ObjectPlace* b)
+{
+    a->SyncPosition();
+    b->SyncPosition();
+    float dx = a->position.x - b->position.x;
+    float dy = a->position.y - b->position.y;
+    float dz = a->position.z - b->position.z;
+    return dx * dx + dy * dy + dz * dz;
+}
+}
+
+float SoundNearness(const Vector4* at, InstanceContext* listener)
+{
+    InstanceContext* second = g_SecondRefFor;
+    if (at == nullptr || second == nullptr || listener == nullptr || listener->place == nullptr || g_Ride.rider == 1)
+    {
+        return 1.0f;
+    }
+
+    InstanceContext* ear = CameraOf(second);
+    ear = ear != nullptr && ear->place != nullptr ? ear : second;
+    if (ear->place == nullptr)
+    {
+        return 1.0f;
+    }
+
+    listener->place->SyncPosition();
+    ear->place->SyncPosition();
+    auto distance = [at](const Vector4& from)
+    {
+        float dx = at->x - from.x;
+        float dy = at->y - from.y;
+        float dz = at->z - from.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    float first = distance(listener->place->position);
+    float near = distance(ear->place->position);
+    return first > 0.01f && near < first ? near / first : 1.0f;
+}
+
+void BeginObjectUpdate(InstanceContext* owner)
+{
+    // $TWIN_P2_NO_SWAP (tests): the world sees the first player only, as before
+    static const bool off = std::getenv("TWIN_P2_NO_SWAP") != nullptr;
+    if (off || g_Swapped || g_SecondRef == nullptr || g_SecondRefFor == nullptr || owner == nullptr || g_Ride.rider >= 0)
+    {
+        return;
+    }
+
+    GameController* controller = G_GameController;
+    InstanceContext* first = g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
+    InstanceContext* second = g_SecondRefFor;
+    if (controller == nullptr || first == nullptr || owner == first || second->place == nullptr || first->place == nullptr)
+    {
+        return;
+    }
+
+    // $TWIN_P2_SWAP_MODE (tests): 1 the second player's own nodes left out, 2 the cameras left out
+    static const int mode = std::getenv("TWIN_P2_SWAP_MODE") != nullptr ? std::atoi(std::getenv("TWIN_P2_SWAP_MODE")) : 0;
+    if (mode == 1 && owner == second)
+    {
+        return;
+    }
+
+    if (mode == 2 && GetGameNode(&owner->nodes, NodeCameraLens) != nullptr)
+    {
+        return;
+    }
+
+    if (owner != second)
+    {
+        if (owner->place == nullptr || SquaredBetween(owner->place, second->place) >= SquaredBetween(owner->place, first->place))
+        {
+            return;
+        }
+    }
+
+    GameProgress& progress = controller->progress;
+    g_SavedPlayer = g_PlayerInstance;
+    g_PlayerInstance = g_SecondRef;
+    g_SavedSlot = progress.play.character;
+    g_SavedCharacter = nullptr;
+    Reference* played = g_SavedSlot < GameProgress::Characters ? progress.characters[g_SavedSlot] : nullptr;
+    if (played != nullptr && played->object == first)
+    {
+        g_SavedCharacter = progress.characters[g_SavedSlot];
+        progress.characters[g_SavedSlot] = g_SecondRef;
+    }
+
+    g_SavedCharacters[0] = g_PlayerCharacter;
+    g_SavedCharacters[1] = g_PlayerCharacter2;
+    g_SavedParts[0] = g_PlayerPart;
+    g_SavedParts[1] = g_PlayerPart2;
+    if (g_SecondCharacter != nullptr && g_SecondPart != nullptr)
+    {
+        g_PlayerCharacter = g_SecondCharacter;
+        g_PlayerCharacter2 = g_SecondCharacter;
+        g_PlayerPart = g_SecondPart;
+        g_PlayerPart2 = g_SecondPart;
+    }
+
+    g_Swapped = true;
+}
+
+void EndObjectUpdate()
+{
+    if (!g_Swapped)
+    {
+        return;
+    }
+
+    g_Swapped = false;
+    // (Given back unless the step itself changed them: then the game's own change stands)
+    if (g_PlayerInstance == g_SecondRef)
+    {
+        g_PlayerInstance = g_SavedPlayer;
+    }
+
+    if (g_SecondCharacter != nullptr && g_PlayerCharacter == g_SecondCharacter)
+    {
+        g_PlayerCharacter = g_SavedCharacters[0];
+        g_PlayerCharacter2 = g_SavedCharacters[1];
+        g_PlayerPart = g_SavedParts[0];
+        g_PlayerPart2 = g_SavedParts[1];
+    }
+
+    GameController* controller = G_GameController;
+    if (controller != nullptr && g_SavedCharacter != nullptr && g_SavedSlot < GameProgress::Characters &&
+        controller->progress.characters[g_SavedSlot] == g_SecondRef)
+    {
+        controller->progress.characters[g_SavedSlot] = g_SavedCharacter;
+    }
+}
+
 InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
 {
     // (Anything asking, not only Cortex and Nina: a worm the second player jumped on launched the first, again and again)
@@ -1147,6 +1324,7 @@ void SecondPlayerFrame()
     }
 
     g_SecondModel = ModelOf(SecondPlayer());
+    KeepSecondRef();
     PingFrame();
 
     GameController* controller = G_GameController;

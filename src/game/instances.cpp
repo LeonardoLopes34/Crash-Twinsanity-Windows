@@ -1,6 +1,7 @@
 #include "game/instances.h"
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "native.h"
 
 #include <unordered_set>
@@ -813,7 +814,15 @@ u32 ChunkInstances::Update(GameTimeController* clock, void* clocks, s32 kindMask
         {
             GameNode* next = node->next;
             TimeClock* nodeClock = &kindClocks[node->owner->clockIndex];
-            if (CallVirtual<u32>(node, node->vtable, GameNode::UpdateSlot, nodeClock) != 0)
+#ifdef TWIN_NATIVE
+            // Two players: "the player" this node sees is the nearer one (coop/secondplayer.cpp)
+            Coop::BeginObjectUpdate(node->owner);
+            u32 stepped = CallVirtual<u32>(node, node->vtable, GameNode::UpdateSlot, nodeClock);
+            Coop::EndObjectUpdate();
+#else
+            u32 stepped = CallVirtual<u32>(node, node->vtable, GameNode::UpdateSlot, nodeClock);
+#endif
+            if (stepped != 0)
             {
                 updated++;
             }

@@ -12,6 +12,10 @@
 #include "platform/math.h"
 #include "retail/libc.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The sounds the game plays on instances and the music emitters, kept in pools handed out by index and followed every frame from
 // where the sound's listener is
 extern "C"
@@ -676,6 +680,15 @@ s32 PlaySoundAtPosition(f32 volume, f32 pitch, GameSound* sound, u32 group, Chun
 
     Vector4 local;
     VuTransformPoint(&view, position, &local);
+#ifdef TWIN_NATIVE
+    // Two players: as loud as it is to the nearer camera (coop/secondplayer.cpp)
+    if (f32 near = Coop::SoundNearness(position, listener); near < 1.0f)
+    {
+        local.x *= near;
+        local.y *= near;
+        local.z *= near;
+    }
+#endif
     s32 number = PlaySoundAt(volume, pitch, voice, sound, SoundGroupOf(static_cast<s32>(group)), &local, last);
     if (number == -1)
     {
@@ -1173,6 +1186,14 @@ void UpdateInstanceSounds()
                     Vector4 at = *RowOf(&place->matrix, PositionRow);
                     Vector4 local;
                     VuTransformPoint(&toListener, &at, &local);
+#ifdef TWIN_NATIVE
+                    if (f32 near = Coop::SoundNearness(&at, listener); near < 1.0f)
+                    {
+                        local.x *= near;
+                        local.y *= near;
+                        local.z *= near;
+                    }
+#endif
                     if (UpdateVoiceAt(voice, sound, &local) == 0)
                     {
                         if (item->bits.repeats == 0)
@@ -1303,6 +1324,14 @@ void UpdateMusicEmitters()
             Vector4 at = *RowOf(&place->matrix, PositionRow);
             Vector4 local;
             VuTransformPoint(&toListener, &at, &local);
+#ifdef TWIN_NATIVE
+            if (f32 near = Coop::SoundNearness(&at, Listener()); near < 1.0f)
+            {
+                local.x *= near;
+                local.y *= near;
+                local.z *= near;
+            }
+#endif
             if (emitter->bits.interleaved != 0)
             {
                 // Retail copies what the stack held as its last angle, which an interleaved track never reads

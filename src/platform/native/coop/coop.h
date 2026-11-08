@@ -9,6 +9,7 @@ struct ModelNode;
 struct InstanceContext;
 struct GraphState;
 struct Matrix4x4;
+struct Vector4;
 
 namespace Coop
 {
@@ -34,6 +35,14 @@ InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played);
 // The player a script's "the player" means for the instance asking (objectnode.cpp, objectnodehelpers.cpp, motion.cpp): for a
 // character that isn't one of the two players (Cortex, Nina following or tied to the player) the nearer player, else the player
 InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player);
+// Around each node's update as the world steps (instances.cpp): "the player" (g_PlayerInstance, the progress's character played)
+// the second player for the node of an instance nearer to it (or its own), given back after
+void BeginObjectUpdate(InstanceContext* owner);
+// A sound's distance share for the second player's ears (soundobjects.cpp: the one mix both hear, through Parsec): the sound at a
+// point, the listener the first player's camera; under 1 when the second player's camera is nearer (the sound's place in the
+// listener's space scaled by it: as loud as it is to the nearer of the two)
+float SoundNearness(const Vector4* at, InstanceContext* listener);
+void EndObjectUpdate();
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();
