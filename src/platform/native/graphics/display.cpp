@@ -105,6 +105,8 @@ struct Gl
     void (*Disable)(GLenum);
     void (*ColorMask)(GLboolean, GLboolean, GLboolean, GLboolean);
     void (*Uniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+    // The leash's red edges (two players: coop/secondplayer.cpp) blended over the picture
+    void (*BlendFunc)(GLenum, GLenum);
     // The render thread's pictures: their fences
     void (*Flush)();
     GLsync (*FenceSync)(GLenum, GLbitfield);
@@ -216,6 +218,24 @@ uniform sampler2D picture;
 void main()
 {
     colour = vec4(texture(picture, place).rgb, 1.0);
+}
+)";
+
+// The leash's warning (two players too far apart: coop/secondplayer.cpp): the window's edges red, wider and stronger nearer the
+// limit, pulsing; the middle of the picture left clear
+constexpr const char* LeashSource = R"(#version 330 core
+in vec2 place;
+out vec4 colour;
+uniform float strength;
+uniform float pulse;
+uniform vec2 aspect;
+void main()
+{
+    vec2 fromEdge = min(place, 1.0 - place) * aspect;
+    float edge = min(fromEdge.x, fromEdge.y);
+    float width = mix(0.04, 0.16, strength);
+    float alpha = (1.0 - smoothstep(0.0, width, edge)) * mix(0.35, 0.8, strength) * mix(0.65, 1.0, pulse);
+    colour = vec4(0.85, 0.0, 0.0, alpha);
 }
 )";
 
@@ -566,6 +586,37 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
 
     gl.BindVertexArray(p.vertexArray);
     gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // Two players near the leash's limit: the window's edges red over the picture
+    if (f32 leash = Coop::LeashWarning(); leash > 0.0f)
+    {
+        static GLuint leashProgram = 0;
+        if (leashProgram == 0)
+        {
+            GLuint vertex = Compile(gl, GL_VERTEX_SHADER, VertexSource);
+            GLuint fragment = Compile(gl, GL_FRAGMENT_SHADER, LeashSource);
+            leashProgram = gl.CreateProgram();
+            gl.AttachShader(leashProgram, vertex);
+            gl.AttachShader(leashProgram, fragment);
+            gl.LinkProgram(leashProgram);
+        }
+
+        static const auto started = std::chrono::steady_clock::now();
+        f32 seconds = std::chrono::duration<f32>(std::chrono::steady_clock::now() - started).count();
+        // (Faster nearer the limit)
+        f32 pulse = 0.5f + 0.5f * std::sin(seconds * (4.0f + 8.0f * leash));
+        gl.Viewport(0, 0, width, height);
+        gl.Enable(0x0BE2);
+        gl.BlendFunc(0x0302, 0x0303);
+        gl.UseProgram(leashProgram);
+        gl.Uniform4f(gl.GetUniformLocation(leashProgram, "uvRect"), 0.0f, 0.0f, 1.0f, 1.0f);
+        gl.Uniform1f(gl.GetUniformLocation(leashProgram, "strength"), leash);
+        gl.Uniform1f(gl.GetUniformLocation(leashProgram, "pulse"), pulse);
+        gl.Uniform2f(gl.GetUniformLocation(leashProgram, "aspect"),
+                     static_cast<f32>(width) / static_cast<f32>(std::max(height, 1)), 1.0f);
+        gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        gl.Disable(0x0BE2);
+    }
+
     if (g_Overlay != nullptr)
     {
         s32 points = 0;
@@ -988,6 +1039,7 @@ void NativeGraphicsAttachWindow(SDL_Window* window)
     Load(gl.BindFramebuffer, "glBindFramebuffer");
     Load(gl.Enable, "glEnable");
     Load(gl.Disable, "glDisable");
+    Load(gl.BlendFunc, "glBlendFunc");
     Load(gl.ColorMask, "glColorMask");
     Load(gl.Uniform4f, "glUniform4f");
     Load(gl.Flush, "glFlush");

@@ -389,6 +389,23 @@ void ModelNode::Draw(const Matrix4x4* matrix, const Matrix4x4* chunkMatrix, Chun
             drawnAnimator = nullptr;
             return;
         }
+
+        // Two players on this PC: the second player's character lit green (the lights' colours changed for its drawing alone,
+        // given back after: the drawing takes them as it's made; coop/secondplayer.cpp)
+        bool tinted = lights != nullptr && Coop::TintsGreen(this);
+        Vector4 keptColours[ChunkLights::Strongest];
+        Vector4 keptAmbient;
+        if (tinted)
+        {
+            keptAmbient = lights->ambient;
+            for (u32 index = 0; index < ChunkLights::Strongest; index++)
+            {
+                keptColours[index] = lights->colours[index];
+                Coop::Greened(&lights->colours[index].x, &lights->colours[index].y, &lights->colours[index].z);
+            }
+
+            Coop::Greened(&lights->ambient.x, &lights->ambient.y, &lights->ambient.z);
+        }
 #endif
         if (drawnAnimator == nullptr)
         {
@@ -398,6 +415,16 @@ void ModelNode::Draw(const Matrix4x4* matrix, const Matrix4x4* chunkMatrix, Chun
         {
             DrawOgi(drawnOgi, matrix, &drawnAnimator->matrices, &drawnAnimator->blendShapes, lights, mode);
         }
+#ifdef TWIN_NATIVE
+        if (tinted)
+        {
+            lights->ambient = keptAmbient;
+            for (u32 index = 0; index < ChunkLights::Strongest; index++)
+            {
+                lights->colours[index] = keptColours[index];
+            }
+        }
+#endif
 
         drawnOgi = nullptr;
     }

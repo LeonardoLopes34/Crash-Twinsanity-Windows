@@ -57,7 +57,12 @@ enum SharedPad : int
     PadMenus = 2,
 };
 int SharedPadMode();
+// How near the two players are to the leash's limit (0 well within, 1 at it): the windows' edges drawn red (graphics/display.cpp)
+float LeashWarning();
 bool RidingHides(const ModelNode* node);
+// The second player's character drawn green (ogi.cpp's ModelNode::Draw): whether a model is its, and a light's colour made green
+bool TintsGreen(const ModelNode* node);
+void Greened(float* red, float* green, float* blue);
 bool RidingHidesShadow(const InstanceContext* instance);
 // The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
 // the camera that character's player sees (the game reads the chunk's last drawn camera, the other player's half the frames); none

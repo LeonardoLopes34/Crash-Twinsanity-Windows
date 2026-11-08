@@ -24,6 +24,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -513,8 +514,8 @@ void EndRide()
         {
             carrier->place->SyncPosition();
             Vector4 to = carrier->place->position;
-            to.x += 0.8f;
-            to.y += 0.5f;
+            // (On the carrier's own spot, a little up: a step aside could be in a wall or over a drop)
+            to.y += 0.3f;
             PutAt(instance, to);
         }
     }
@@ -541,8 +542,41 @@ bool BackpackPressed(int player)
     return pressed;
 }
 
+// The leash: the world is loaded around the first player only, so the two can't go far apart. Past WarnAt the windows' edges turn
+// red (LeashWarning: stronger nearer the limit), at LimitAt the second player is taken into the first's backpack
+constexpr float WarnAt = 20.0f;
+constexpr float LimitAt = 30.0f;
+float g_Leash = 0.0f;
+
+void LeashFrame()
+{
+    g_Leash = 0.0f;
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = SecondPlayer();
+    if (first == nullptr || second == nullptr || first->place == nullptr || second->place == nullptr)
+    {
+        return;
+    }
+
+    first->place->SyncPosition();
+    second->place->SyncPosition();
+    float dx = first->place->position.x - second->place->position.x;
+    float dy = first->place->position.y - second->place->position.y;
+    float dz = first->place->position.z - second->place->position.z;
+    float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance >= LimitAt)
+    {
+        Native::Log("second player: too far from the first (%.1f), into the first player's backpack", distance);
+        StartRide(1);
+        return;
+    }
+
+    g_Leash = distance <= WarnAt ? 0.0f : (distance - WarnAt) / (LimitAt - WarnAt);
+}
+
 void BackpackFrame()
 {
+    g_Leash = 0.0f;
     bool pressed[2] = {BackpackPressed(0), BackpackPressed(1)};
     // $TWIN_P2_TEST_BACKPACK="in,out" (tests): the second player into the first's backpack that many seconds in, out at the second
     static const char* test = std::getenv("TWIN_P2_TEST_BACKPACK");
@@ -586,6 +620,8 @@ void BackpackFrame()
             return;
         }
     }
+
+    LeashFrame();
 }
 
 ModelNode* ModelOf(InstanceContext* instance)
@@ -602,6 +638,31 @@ bool InCutscene()
     GameController* controller = G_GameController;
     return controller != nullptr && controller->State() == GameController::StateWatching;
 }
+}
+
+namespace
+{
+// The second player's model, kept each frame (looked up once, not at every model's drawing)
+const ModelNode* g_SecondModel = nullptr;
+}
+
+bool TintsGreen(const ModelNode* node)
+{
+    return node != nullptr && node == g_SecondModel;
+}
+
+void Greened(float* red, float* green, float* blue)
+{
+    float bright = (*red + *green + *blue) / 3.0f;
+    *red = *red * 0.25f;
+    *blue = *blue * 0.3f;
+    *green = *green * 0.6f + bright * 0.7f;
+}
+
+float LeashWarning()
+{
+    GameController* controller = G_GameController;
+    return controller != nullptr && controller->State() == GameController::StatePlaying ? g_Leash : 0.0f;
 }
 
 int SharedPadMode()
@@ -659,6 +720,8 @@ void SecondPlayerFrame()
         return;
     }
 
+    g_SecondModel = ModelOf(SecondPlayer());
+
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;
     static int playingFrames = 0;
@@ -688,27 +751,14 @@ void SecondPlayerFrame()
 
     if (returning && Valid())
     {
-        if (++playingFrames < SettleFrames)
-        {
-            return;
-        }
-
+        // Back in play (a death's restart, a cutscene's end): into the first player's backpack, carried from the first frame (put
+        // beside the first it sometimes landed in a wall or under the ground, or stayed where it died, dying again); Select gets out
         returning = false;
         playingFrames = 0;
-        InstanceContext* first = FirstPlayer();
-        InstanceContext* second = g_Second.instance;
-        if (first != nullptr && first->place != nullptr && second->place != nullptr)
+        if (g_Ride.rider < 0)
         {
-            first->place->SyncPosition();
-            second->place->SyncPosition();
-            Vector4 to = first->place->position;
-            to.x += BesideFirst;
-            if (second->place->MoveTo(&to))
-            {
-                QueueObject(second);
-            }
-
-            Native::Log("second player: back in play, put beside the first at (%.1f, %.1f, %.1f)", to.x, to.y, to.z);
+            StartRide(1);
+            Native::Log("second player: back in play, in the first player's backpack");
         }
     }
     else if (returning)
@@ -758,6 +808,11 @@ void SecondPlayerFrame()
     {
         playingFrames = 0;
         Make();
+        // Made: in the first player's backpack to start with (never in a wall); Select gets out
+        if (Valid() && g_Ride.rider < 0)
+        {
+            StartRide(1);
+        }
     }
 }
 }
