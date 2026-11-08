@@ -1320,7 +1320,9 @@ void ShowFrame()
     {
         RenderWaitFrame(frame - 1);
         Shown& before = g_Shown[(frame - 1) % 3];
-        g_PresentTarget = WindowForView(views[(frame - 1) % 3]);
+        // (The render thread draws a frame behind the game: the picture shown now was drawn from the camera chosen for the frame
+        // queued now, the views alternating; measured on the two windows, 2026-11-08)
+        g_PresentTarget = WindowForView(views[frame % 3]);
         PresentShown(before);
         g_PresentTarget = nullptr;
         shown = &before;

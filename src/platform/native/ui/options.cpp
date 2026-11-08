@@ -374,7 +374,8 @@ bool TakeFocusPause()
 {
     // Online co-op: the game goes on when the window loses the focus (the partner's doesn't stop)
     bool due = g_FocusPauseDue.exchange(false);
-    return due && IsOn(OptionPauseOnFocusLoss) && !Coop::Active();
+    // (Two players on this PC too: two windows, the focus goes from one to the other)
+    return due && IsOn(OptionPauseOnFocusLoss) && !Coop::Active() && !Coop::SecondPlayerWanted();
 }
 
 void BeginCapture()
