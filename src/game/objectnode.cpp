@@ -25,6 +25,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 namespace
 {
 
@@ -1343,7 +1347,13 @@ InstanceContext* ObjectNode::GetDesignator(u32 designator)
     case DesignatesItself:
         return owner;
     case DesignatesPlayer:
+#ifdef TWIN_NATIVE
+        // Two players: Cortex or Nina go to the nearer one (coop/secondplayer.cpp)
+        return Coop::PlayerFor(owner, g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object)
+                                                                  : nullptr);
+#else
         return g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
+#endif
     case DesignatesHeadTarget:
         if (headTracking == nullptr)
         {

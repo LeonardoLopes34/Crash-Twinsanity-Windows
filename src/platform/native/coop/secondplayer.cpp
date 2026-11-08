@@ -844,6 +844,18 @@ InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
     return squared(from->place, second->place) < squared(from->place, played->place) ? second : played;
 }
 
+InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
+{
+    if (g_SecondModel == nullptr || asking == nullptr || player == nullptr || asking == player ||
+        GetGameNode(&asking->nodes, NodeCharacter) == nullptr)
+    {
+        return player;
+    }
+
+    InstanceContext* second = SecondPlayer();
+    return asking == second ? player : NearerPlayer(asking, player);
+}
+
 bool TintsGreen(const ModelNode* node)
 {
     return node != nullptr && node == g_SecondModel;
@@ -995,6 +1007,30 @@ void SecondPlayerFrame()
         if (controls != nullptr && controls->pad == nullptr && pad != nullptr && pad->info != nullptr && g_Ride.rider != 1)
         {
             controls->pad = pad;
+        }
+
+        // The first player switched to another character (Cortex, Nina, back to Crash): the second becomes the same character (the
+        // old one put to sleep: out of the world's steps and drawing, its memory the game's to let go with its chunk)
+        CharacterAgent* firstAgent = AgentOf(FirstPlayer());
+        CharacterAgent* secondAgent = AgentOf(g_Second.instance);
+        if (firstAgent != nullptr && secondAgent != nullptr && firstAgent->objectId != secondAgent->objectId)
+        {
+            Native::Log("second player: the first player is another character now (object %u, was %u): the second follows",
+                        static_cast<unsigned>(firstAgent->objectId), static_cast<unsigned>(secondAgent->objectId));
+            EndRide();
+            InstanceContext* old = g_Second.instance;
+            old->flags.visible = 0;
+            old->flags.collisionActive = 0;
+            if (ControlsNode* oldControls = ControlsOf(old))
+            {
+                oldControls->pad = nullptr;
+            }
+
+            CallVirtual<u32>(old, old->vtable, ReferencedObject::SleepSlot);
+            g_Second = Second();
+            g_SecondModel = nullptr;
+            playingFrames = SettleFrames - 1;
+            return;
         }
 
         BackpackFrame();

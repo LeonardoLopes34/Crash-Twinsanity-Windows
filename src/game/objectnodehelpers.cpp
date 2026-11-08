@@ -18,6 +18,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The object node's helpers: where a script's targets are, throws, turning an instance, notifying the instances around it, its
 // water touches and its surfaces' contact sounds and particles
 
@@ -359,6 +363,10 @@ void DesignatedPosition(Vector4* position, u32 space, BehaviourRunner* runner, c
         {
         case DesignatesPlayer:
             target = g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
+#ifdef TWIN_NATIVE
+            // Two players: Cortex or Nina go to the nearer one (coop/secondplayer.cpp)
+            target = target != nullptr ? Coop::PlayerFor(node->owner, target) : nullptr;
+#endif
             place = RetailPlaceOf(target);
             fromPlace = true;
             break;

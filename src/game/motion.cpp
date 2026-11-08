@@ -13,6 +13,10 @@
 #include "game/reference.h"
 #include "game/rigidbody.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 namespace
 {
 // A direction whose x and z squared add up to no more than this (1e-06) is straight up or down
@@ -669,6 +673,10 @@ void StartPacketMotion(BehaviourRunner* runner, TimeClock* clock)
         {
         case DesignatesPlayer:
             instance = g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
+#ifdef TWIN_NATIVE
+            // Two players: Cortex or Nina go to the nearer one (coop/secondplayer.cpp)
+            instance = instance != nullptr ? Coop::PlayerFor(node->owner, instance) : nullptr;
+#endif
             break;
         case DesignatesHeadTarget:
             if (node->headTracking != nullptr)

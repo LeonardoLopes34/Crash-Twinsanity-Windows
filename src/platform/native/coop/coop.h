@@ -31,6 +31,9 @@ InstanceContext* SecondPlayer();
 // The character an instance's sight and aim go to (conditionchecks.cpp: enemies looking for the player): the nearer of the two
 // players on foot (the played one when there's no second, or the second rides in the backpack)
 InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played);
+// The player a script's "the player" means for the instance asking (objectnode.cpp, objectnodehelpers.cpp, motion.cpp): for a
+// character that isn't one of the two players (Cortex, Nina following or tied to the player) the nearer player, else the player
+InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player);
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();
