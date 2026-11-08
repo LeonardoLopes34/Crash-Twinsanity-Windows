@@ -293,7 +293,10 @@ void Build()
     controls.push_back(OptionChoice(TextMenuHints, TextDescMenuHints, OptionMenuHints, {TextHintsOriginal, TextHintsBar}));
     controls.push_back(Toggle(TextMouse, TextDescMouse, OptionMouse));
     controls.push_back(Toggle(TextMouseLook, TextDescMouseLook, OptionMouseLook));
-    Row sensitivity = OptionSlider(TextMouseSensitivity, TextDescMouseSensitivity, OptionMouseSensitivity, 1, 10);
+    // Fine steps (0.1 to 10.0): the slider's places are the table's, shown as their numbers
+    Row sensitivity = OptionSlider(TextMouseSensitivity, TextDescMouseSensitivity, OptionMouseSensitivity, 0,
+                                   MouseSensitivityStep(10.0f));
+    sensitivity.valueText = [](s32 step) { return MouseSensitivityText(step); };
     sensitivity.shown = [] { return IsOn(OptionMouseLook); };
     controls.push_back(sensitivity);
     Row invertMouse = Toggle(TextInvertMouseY, TextDescInvertMouseY, OptionInvertMouseY);

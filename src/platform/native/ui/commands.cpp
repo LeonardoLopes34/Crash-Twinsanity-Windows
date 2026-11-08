@@ -720,7 +720,7 @@ void TestControls()
     Check(names.size() == 7, "the mouse's keys' names: %zu of 7 different", names.size());
 
     // Mouse look: a flick saturates, a slow move pushes a little, no motion falls back to the middle within 50 ms
-    SetOption(OptionMouseSensitivity, 5);
+    SetOption(OptionMouseSensitivity, MouseSensitivityStep(5.0f));
     SetOption(OptionInvertMouseY, 0);
     MouseLookForceForTest(true);
     f32 x = 0.0f;
@@ -746,7 +746,7 @@ void TestControls()
     // Past a sensitivity of 5 a flick pushes on past the stick's full deflection (the game's fastest turn): 2 at 6, 6 at 10
     for (s32 sensitivity : {6, 10})
     {
-        SetOption(OptionMouseSensitivity, sensitivity);
+        SetOption(OptionMouseSensitivity, MouseSensitivityStep(static_cast<f32>(sensitivity)));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         MouseLookTestMotion(600.0f, 0.0f);
         MouseLookStick(&x, &y);
@@ -755,7 +755,7 @@ void TestControls()
         MouseLookStick(&x, &y);
     }
 
-    SetOption(OptionMouseSensitivity, 5);
+    SetOption(OptionMouseSensitivity, MouseSensitivityStep(5.0f));
     MouseLookForceForTest(false);
     // The camera speed on the game's turn: 5 the game's own, 10 twice
     f32 yaw = 1.0f;

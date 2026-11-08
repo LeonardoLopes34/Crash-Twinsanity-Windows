@@ -664,9 +664,11 @@ void SliderValue(OverlayFrame& frame, const Row& row, f32 left, f32 middle, cons
     knob.lip = 2.0f;
     knob.lipColour = Hex(0x000000, 0.25f);
     frame.Box(left + width * fraction - 13.0f, middle - 13.0f, 26.0f, 26.0f, knob);
-    char number[8];
+    char number[16];
     std::snprintf(number, sizeof(number), "%d", value);
-    frame.Text(number, left + width + 34.0f, middle, Body(21.0f, colours.label), OverlayAlign::Centre);
+    // A slider with its own numbers (the mouse sensitivity's tenths)
+    std::string shown = row.valueText ? row.valueText(value) : std::string(number);
+    frame.Text(shown, left + width + 34.0f, middle, Body(21.0f, colours.label), OverlayAlign::Centre);
     regions.push_back({HitKind::Slider, left, top, width, RowHeight, index, -1, -1});
 }
 

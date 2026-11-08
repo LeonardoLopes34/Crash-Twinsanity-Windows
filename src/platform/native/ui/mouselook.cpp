@@ -213,9 +213,9 @@ bool MouseLookStick(f32* x, f32* y)
         return false;
     }
 
-    s32 sensitivity = std::max<s32>(1, GetOption(OptionMouseSensitivity));
-    f32 fullSpeed = FullSpeedAtOne / static_cast<f32>(sensitivity);
-    f32 most = static_cast<f32>(std::max<s32>(1, sensitivity - StickSensitivity + 1));
+    f32 sensitivity = std::max(0.1f, MouseSensitivity());
+    f32 fullSpeed = FullSpeedAtOne / sensitivity;
+    f32 most = std::max(1.0f, sensitivity - static_cast<f32>(StickSensitivity) + 1.0f);
     // Each axis by its own motion; an axis without any falls back to the middle
     f32 decay = std::max(0.0f, 1.0f - seconds / DecaySeconds);
     g_StickX = dx != 0.0f ? Push(dx, seconds, fullSpeed, most) : g_StickX * decay;

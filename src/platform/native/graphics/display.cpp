@@ -239,6 +239,33 @@ void main()
 }
 )";
 
+// The ping (two players: coop/secondplayer.cpp): a pulsing ring, a dot and a beam over the spot; at the picture's edge (out of view)
+// a small ring only. uvRect covers the picture; spot is where, in -1 to 1 each way; aspect the picture's width over height
+constexpr const char* PingSource = R"(#version 330 core
+in vec2 place;
+out vec4 colour;
+uniform vec2 spot;
+uniform float aspect;
+uniform float strength;
+uniform float pulse;
+uniform float edge;
+void main()
+{
+    vec2 ndc = vec2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0);
+    vec2 d = (ndc - spot) * vec2(aspect, 1.0);
+    float r = length(d);
+    float ringRadius = mix(0.050, 0.075, pulse);
+    float ring = 1.0 - smoothstep(0.006, 0.014, abs(r - ringRadius));
+    float core = 1.0 - smoothstep(0.010, 0.016, r);
+    float beam = (1.0 - smoothstep(0.003, 0.006, abs(d.x))) * step(0.0, d.y) * (1.0 - smoothstep(0.05, 0.22, d.y)) * step(0.02, d.y);
+    float shape = max(ring, max(core, beam * (1.0 - edge)));
+    float shadow = (1.0 - smoothstep(0.0, 0.030, abs(r - ringRadius))) * 0.35;
+    vec3 tint = mix(vec3(1.0, 0.78, 0.12), vec3(1.0, 1.0, 0.85), pulse * 0.5);
+    float alpha = clamp(shape + shadow * (1.0 - shape), 0.0, 1.0) * strength;
+    colour = vec4(mix(vec3(0.0), tint, shape), alpha);
+}
+)";
+
 // The picture's place in a window of these pixels: the TV's shape, letterboxed or pillarboxed
 void ViewRect(s32 width, s32 height, s32* x, s32* y, s32* viewWidth, s32* viewHeight)
 {
@@ -615,6 +642,44 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
                      static_cast<f32>(width) / static_cast<f32>(std::max(height, 1)), 1.0f);
         gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         gl.Disable(0x0BE2);
+    }
+
+    // The ping both players see, over the picture (in the picture's own rectangle: its place was worked out for the picture)
+    {
+        f32 spotX = 0.0f;
+        f32 spotY = 0.0f;
+        f32 pingStrength = 0.0f;
+        bool pingEdge = false;
+        int pingView = target != p.window && Coop::TwoViews() ? 1 : 0;
+        if (Coop::PingMarker(pingView, &spotX, &spotY, &pingStrength, &pingEdge))
+        {
+            static GLuint pingProgram = 0;
+            if (pingProgram == 0)
+            {
+                GLuint vertex = Compile(gl, GL_VERTEX_SHADER, VertexSource);
+                GLuint fragment = Compile(gl, GL_FRAGMENT_SHADER, PingSource);
+                pingProgram = gl.CreateProgram();
+                gl.AttachShader(pingProgram, vertex);
+                gl.AttachShader(pingProgram, fragment);
+                gl.LinkProgram(pingProgram);
+            }
+
+            static const auto pingStarted = std::chrono::steady_clock::now();
+            f32 pingSeconds = std::chrono::duration<f32>(std::chrono::steady_clock::now() - pingStarted).count();
+            gl.Viewport(p.viewX, p.viewY, p.viewWidth, p.viewHeight);
+            gl.Enable(0x0BE2);
+            gl.BlendFunc(0x0302, 0x0303);
+            gl.UseProgram(pingProgram);
+            gl.Uniform4f(gl.GetUniformLocation(pingProgram, "uvRect"), 0.0f, 0.0f, 1.0f, 1.0f);
+            gl.Uniform2f(gl.GetUniformLocation(pingProgram, "spot"), spotX, spotY);
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "aspect"),
+                         static_cast<f32>(p.viewWidth) / static_cast<f32>(std::max(p.viewHeight, 1)));
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "strength"), pingStrength);
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "pulse"), 0.5f + 0.5f * std::sin(pingSeconds * 6.0f));
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "edge"), pingEdge ? 1.0f : 0.0f);
+            gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            gl.Disable(0x0BE2);
+        }
     }
 
     if (g_Overlay != nullptr)

@@ -394,6 +394,11 @@ enum Option : u32
 };
 
 s32 GetOption(Option option);
+// The mouse sensitivity as a number (0.1 to 10.0, 5.0 the middle): the option is a place in a table of fine steps
+f32 MouseSensitivity();
+// The place in the table nearest (not under) a sensitivity, and a place's number as text
+s32 MouseSensitivityStep(f32 sensitivity);
+std::string MouseSensitivityText(s32 step);
 // An option's default (options.cpp's table): the first start's value and the settings' reset's
 s32 DefaultOption(Option option);
 bool IsOn(Option option);

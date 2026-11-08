@@ -65,6 +65,10 @@ enum SharedPad : int
 int SharedPadMode();
 // How near the two players are to the leash's limit (0 well within, 1 at it): the windows' edges drawn red (graphics/display.cpp)
 float LeashWarning();
+// The ping both players see (a player's camera's look marked: the first's middle mouse button, the second's R3): where it is in a
+// view's picture (view 0 the first player's window, 1 the second's; -1 to 1, the picture's middle 0), how strong, and whether it's
+// off to the picture's edge (out of view); false when there's none
+bool PingMarker(int view, float* x, float* y, float* strength, bool* edge);
 bool RidingHides(const ModelNode* node);
 // The second player's character drawn green (ogi.cpp's ModelNode::Draw): whether a model is its, and a light's colour made green
 bool TintsGreen(const ModelNode* node);

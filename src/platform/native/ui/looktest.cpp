@@ -84,7 +84,7 @@ void Next(Phase phase)
 void Start(u32 index)
 {
     g_Case = index;
-    SetOption(OptionMouseSensitivity, Cases[index].sensitivity);
+    SetOption(OptionMouseSensitivity, MouseSensitivityStep(static_cast<f32>(Cases[index].sensitivity)));
     SetOption(OptionCameraSpeed, Cases[index].cameraSpeed);
     g_LastFeed = Clock::now();
     Next(Phase::Settling);

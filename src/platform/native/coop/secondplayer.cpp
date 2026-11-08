@@ -23,6 +23,7 @@
 #include "game/place.h"
 #include "game/player.h"
 #include "game/reference.h"
+#include "game/sound.h"
 
 #include <SDL3/SDL.h>
 
@@ -428,8 +429,7 @@ void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera
         if (mouseX != 0.0f || mouseY != 0.0f)
         {
             mouseAt = now;
-            float perPoint = RadiansPerPoint * static_cast<float>(std::max<int>(1, NativeUi::GetOption(NativeUi::OptionMouseSensitivity))) /
-                             5.0f;
+            float perPoint = RadiansPerPoint * NativeUi::MouseSensitivity() / 5.0f;
             angle = mouseX * perPoint * (NativeUi::IsOn(NativeUi::OptionInvertCameraX) ? -1.0f : 1.0f);
             pitchBy = mouseY * perPoint * (NativeUi::IsOn(NativeUi::OptionInvertMouseY) ? -1.0f : 1.0f);
         }
@@ -503,6 +503,188 @@ void OrbitCameras()
 }
 }
 
+// The ping: where a player's camera looks, marked for both: the first player's middle mouse button, the second's right stick pressed
+// (R3). A ring and a beam over the spot in each window (graphics/display.cpp draws it from PingMarker), the extra life's chime
+namespace
+{
+struct Ping
+{
+    bool active = false;
+    Vector4 at = {};
+    u64 since = 0;
+};
+Ping g_Ping;
+// Where the ping falls in each view's picture (-1 to 1 each way, the picture's middle 0), whether it's in front of the camera
+struct PingScreen
+{
+    bool on = false;
+    float x = 0.0f;
+    float y = 0.0f;
+    bool edge = false;
+};
+PingScreen g_PingScreen[2];
+constexpr float PingSeconds = 7.0f;
+constexpr float PingReach = 250.0f;
+// The extra life's chime (oleg.cpp), a little louder than there
+constexpr u32 PingSound = 0x10A;
+constexpr float PingVolume = 0.35f;
+
+void MakePing(int player)
+{
+    InstanceContext* camera = CameraOf(player == 0 ? FirstPlayer() : SecondPlayer());
+    if (player == 0)
+    {
+        GameController* controller = G_GameController;
+        InstanceContext* shown = ViewCamera(controller);
+        camera = shown != nullptr ? shown : camera;
+    }
+
+    if (camera == nullptr || camera->place == nullptr || camera->chunk == nullptr)
+    {
+        return;
+    }
+
+    RotateAndTranslate(camera->place);
+    const Matrix4x4& m = camera->place->matrix;
+    Vector4 start = {m.m[3][0], m.m[3][1], m.m[3][2], 1.0f};
+    Vector4 end = {start.x + m.m[2][0] * PingReach, start.y + m.m[2][1] * PingReach, start.z + m.m[2][2] * PingReach, 1.0f};
+    Vector4 hit;
+    f32 distance = 0.0f;
+    constexpr u32 AnySolid = 0x10 | 0x20 | 0x40 | 0x80;
+    if (GetCollisionCheck(camera->chunk, &start, &end, AnySolid, &distance, &hit, nullptr) == 0)
+    {
+        return;
+    }
+
+    g_Ping.active = true;
+    g_Ping.at = {hit.x, hit.y, hit.z, 1.0f};
+    g_Ping.since = SDL_GetTicksNS();
+    PlaySoundById(PingVolume, OwnScale, PingSound, 0, 0, -1);
+    Native::Log("second player: player %d pinged (%.1f, %.1f, %.1f)", player + 1, hit.x, hit.y, hit.z);
+}
+
+// Once a frame in play: the buttons that ping
+void PingFrame()
+{
+    GameController* controller = G_GameController;
+    if (controller == nullptr || controller->State() != GameController::StatePlaying)
+    {
+        return;
+    }
+
+    if (g_Ping.active && static_cast<float>(SDL_GetTicksNS() - g_Ping.since) / 1e9f > PingSeconds)
+    {
+        g_Ping.active = false;
+    }
+
+    static bool was[2] = {false, false};
+    bool down[2] = {false, false};
+    // The middle button counts while the window holds the mouse (play with mouse look)
+    if (NativeUi::MouseLookActive())
+    {
+        down[0] = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_MMASK) != 0;
+    }
+
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
+    if (second != nullptr && second->info != nullptr)
+    {
+        down[1] = (second->now & (1u << PadR3)) != 0;
+    }
+
+    // $TWIN_P2_TEST_PING="s1,s2": the first player pings at those seconds (tests)
+    static const char* test = std::getenv("TWIN_P2_TEST_PING");
+    if (test != nullptr)
+    {
+        double seconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+        for (const char* at = test; at != nullptr && *at != 0;)
+        {
+            double when = std::atof(at);
+            if (seconds >= when && seconds < when + 0.2)
+            {
+                down[0] = true;
+            }
+
+            at = std::strchr(at, ',');
+            at = at != nullptr ? at + 1 : nullptr;
+        }
+    }
+
+    for (int player = 0; player < 2; player++)
+    {
+        if (down[player] && !was[player] && (player == 0 ? FirstPlayer() : SecondPlayer()) != nullptr)
+        {
+            MakePing(player);
+        }
+
+        was[player] = down[player];
+    }
+}
+
+// After a view's drawing: the ping's place in that view's picture, from the matrices the drawing made
+void ProjectPing(int view)
+{
+    PingScreen& out = g_PingScreen[view];
+    out.on = false;
+    GameController* controller = G_GameController;
+    if (!g_Ping.active || controller == nullptr)
+    {
+        return;
+    }
+
+    const Matrix4x4& toCamera = controller->view.toCamera;
+    const Matrix4x4& projection = controller->view.projection;
+    const Vector4& p = g_Ping.at;
+    float cx = p.x * toCamera.m[0][0] + p.y * toCamera.m[1][0] + p.z * toCamera.m[2][0] + toCamera.m[3][0];
+    float cy = p.x * toCamera.m[0][1] + p.y * toCamera.m[1][1] + p.z * toCamera.m[2][1] + toCamera.m[3][1];
+    float cz = p.x * toCamera.m[0][2] + p.y * toCamera.m[1][2] + p.z * toCamera.m[2][2] + toCamera.m[3][2];
+    if (cz < 0.2f)
+    {
+        // Behind the camera: shown at the edge on its side, so the player turns to it
+        out.on = true;
+        out.edge = true;
+        out.x = cx >= 0.0f ? 0.92f : -0.92f;
+        out.y = 0.0f;
+        return;
+    }
+
+    float x = cx * projection.m[0][0] / cz;
+    float y = cy * projection.m[1][1] / cz;
+    out.edge = std::fabs(x) > 0.92f || std::fabs(y) > 0.92f;
+    out.x = std::fmax(-0.92f, std::fmin(0.92f, x));
+    out.y = std::fmax(-0.92f, std::fmin(0.92f, y));
+    out.on = true;
+    // $TWIN_P2_LOG (tests): where the ping falls, twice a second
+    static const bool log = std::getenv("TWIN_P2_LOG") != nullptr;
+    static u32 count = 0;
+    if (log && view == 0 && ++count % 30 == 0)
+    {
+        Native::Log("second player: the ping in view 0 at (%.2f, %.2f), camera depth %.1f", x, y, cz);
+    }
+}
+}
+
+bool PingMarker(int view, float* x, float* y, float* strength, bool* edge)
+{
+    if (!g_Ping.active || view < 0 || view > 1 || !g_PingScreen[view].on)
+    {
+        return false;
+    }
+
+    float age = static_cast<float>(SDL_GetTicksNS() - g_Ping.since) / 1e9f;
+    if (age > PingSeconds)
+    {
+        return false;
+    }
+
+    *x = g_PingScreen[view].x;
+    *y = g_PingScreen[view].y;
+    *edge = g_PingScreen[view].edge;
+    // Strong at first, fading out through the last second
+    *strength = age > PingSeconds - 1.0f ? (PingSeconds - age) : 1.0f;
+    return true;
+}
+
 // The third person camera (on; $TWIN_ORBIT_CAMERA=0 the game's own, as F7 does)
 bool OrbitCameraWanted()
 {
@@ -554,6 +736,8 @@ void BeforeDraw()
 
 void AfterDraw()
 {
+    // The ping's place in the picture just drawn (the first player's view 0, the second's 1)
+    ProjectPing(g_Lent ? 1 : 0);
     if (!g_Lent)
     {
         return;
@@ -608,16 +792,18 @@ int TwoViewsFrame()
     int drawn = g_Drawn;
     int next = on ? 1 - g_Drawing : 0;
 
-    // 120 frames a second while there are two views (each window then 60)
+    // Two views share the frames (each window gets every other one): a rate under 120 is raised to 120 (each window 60), a rate
+    // the player chose at 120 or above (144, unlimited) is left alone. It was set to 120 whatever the choice, and saved as it:
+    // the player's unlimited became 120, each window 60 (the host's 200 Hz screen no longer smooth, 2026-11-08)
     static bool rateSet = false;
     if (on && !rateSet)
     {
         rateSet = true;
         constexpr s32 Rate120 = 2;
-        if (NativeUi::GetOption(NativeUi::OptionRefresh60) != Rate120)
+        if (NativeUi::GetOption(NativeUi::OptionRefresh60) < Rate120)
         {
             NativeUi::SetOption(NativeUi::OptionRefresh60, Rate120);
-            Native::Log("second player: two views, the frame rate set to 120 (each window 60)");
+            Native::Log("second player: two views, the frame rate raised to 120 (each window 60)");
         }
     }
 
@@ -749,8 +935,9 @@ bool BackpackPressed(int player)
 // The leash: the world is loaded around the first player only, so the two can't go far apart. Past WarnAt the windows' edges turn
 // red (LeashWarning: stronger nearer the limit), at LimitAt the second player is taken into the first's backpack
 // (20 and 30 were too short: the players were pulled together all the time)
-constexpr float WarnAt = 55.0f;
-constexpr float LimitAt = 75.0f;
+// (Four times the 55 and 75 before, as the players asked)
+constexpr float WarnAt = 220.0f;
+constexpr float LimitAt = 300.0f;
 float g_Leash = 0.0f;
 
 void LeashFrame()
@@ -960,6 +1147,7 @@ void SecondPlayerFrame()
     }
 
     g_SecondModel = ModelOf(SecondPlayer());
+    PingFrame();
 
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;

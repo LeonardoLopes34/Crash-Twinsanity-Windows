@@ -65,7 +65,9 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionMuteInactive, "mute_in_background", 1, 1},
     {OptionUltrawide, "ultrawide", 0, 1},
     {OptionMouseLook, "mouse_look", 1, 1},
-    {OptionMouseSensitivity, "mouse_sensitivity", 5, 10},
+    // A place in SensitivitySteps (fine steps from 0.1: 1 was too fast for some mice); 17 is 5.0, what the whole numbers' 5 was.
+    // Another name than the whole numbers' file entry so an old one isn't read as a place in the table
+    {OptionMouseSensitivity, "mouse_sensitivity_step", 17, 22},
     {OptionInvertMouseY, "invert_mouse_y", 0, 1},
     {OptionLanguage, "language", 0, 5},
     {OptionDetailedLog, "detailed_log", 0, 1},
@@ -266,6 +268,42 @@ s32 GetOption(Option option)
 {
     Read();
     return g_Values[option];
+}
+
+namespace
+{
+// The mouse sensitivity's steps, tenths: 0.1 to 1 by 0.1, then wider
+constexpr s32 SensitivitySteps[] = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 15, 20,
+                                    25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100};
+constexpr s32 SensitivityStepCount = static_cast<s32>(sizeof(SensitivitySteps) / sizeof(SensitivitySteps[0]));
+}
+
+f32 MouseSensitivity()
+{
+    s32 step = std::clamp(GetOption(OptionMouseSensitivity), 0, SensitivityStepCount - 1);
+    return static_cast<f32>(SensitivitySteps[step]) / 10.0f;
+}
+
+s32 MouseSensitivityStep(f32 sensitivity)
+{
+    s32 tenths = static_cast<s32>(sensitivity * 10.0f + 0.5f);
+    for (s32 step = 0; step < SensitivityStepCount; step++)
+    {
+        if (SensitivitySteps[step] >= tenths)
+        {
+            return step;
+        }
+    }
+
+    return SensitivityStepCount - 1;
+}
+
+std::string MouseSensitivityText(s32 step)
+{
+    s32 tenths = SensitivitySteps[std::clamp(step, 0, SensitivityStepCount - 1)];
+    char text[16];
+    std::snprintf(text, sizeof(text), "%d.%d", tenths / 10, tenths % 10);
+    return text;
 }
 
 bool IsOn(Option option)
