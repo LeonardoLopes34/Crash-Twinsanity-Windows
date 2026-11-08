@@ -375,6 +375,8 @@ void WriteWindowShot(s32 width, s32 height)
 // drawn with the window's context. Which window the picture goes to now (none: the window)
 SDL_Window* g_SecondWindow = nullptr;
 SDL_Window* g_PresentTarget = nullptr;
+// Pictures shown in the second player's window (the black wait is drawn while this doesn't grow)
+u32 g_SecondPresented = 0;
 
 // The window a view's frames go to (the second player's made when it's first wanted)
 SDL_Window* WindowForView(int view)
@@ -577,6 +579,7 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
     SDL_GL_SwapWindow(target);
     if (target != p.window)
     {
+        g_SecondPresented++;
         SDL_GL_MakeCurrent(p.window, p.context);
     }
 }
@@ -1336,9 +1339,52 @@ void ThreadedFrameStats(const Shown* shown)
 void ShowFrameHere();
 }
 
+namespace
+{
+// The second player's window made as soon as two players are asked for (not when the first picture of its view comes, which is
+// once the game itself starts: the screen a friend watches through Parsec stayed empty through the menus), and kept black while no
+// picture of its view comes
+void KeepSecondWindow()
+{
+    Presenter& p = g_Presenter;
+    if (p.window == nullptr || !Coop::SecondPlayerWanted())
+    {
+        return;
+    }
+
+    static u32 calls = 0;
+    static u32 lastPresented = 0;
+    if (++calls % 20 != 1)
+    {
+        return;
+    }
+
+    if (g_SecondPresented != lastPresented)
+    {
+        lastPresented = g_SecondPresented;
+        return;
+    }
+
+    SDL_Window* window = WindowForView(1);
+    if (window == nullptr || window == p.window)
+    {
+        return;
+    }
+
+    SDL_GL_MakeCurrent(window, p.context);
+    p.gl.BindFramebuffer(0x8D40, 0);
+    p.gl.ColorMask(1, 1, 1, 1);
+    p.gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    p.gl.Clear(GL_COLOR_BUFFER_BIT);
+    SDL_GL_SwapWindow(window);
+    SDL_GL_MakeCurrent(p.window, p.context);
+}
+}
+
 void ShowFrame()
 {
     NoteWindowSize();
+    KeepSecondWindow();
     // The card's time of the frames before on this thread's context (the window's: the picture shown, the UI over it; with one
     // thread everything), read where it's there (gputime.h)
     GpuTimeFrame();
