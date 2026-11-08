@@ -35,6 +35,15 @@ int TwoViewsFrame();
 // the first player's given back right after (the game's own steps, triggers, rigs and chunk loading only ever see the first's)
 void BeforeDraw();
 void AfterDraw();
+// Whether two views are drawn (each frame one player's camera), and whether the drawing now is the second player's. With two views
+// what one camera sees isn't taken back by the other's drawing (scenery.cpp's culling, ogi.cpp's models, shadows.cpp): an instance
+// in a drawn cell for either camera stays drawn
+bool TwoViews();
+bool DrawingSecondView();
+// An instance in view of the second player's camera at its drawing (scenery.cpp's culling), and whether it was at its last drawings
+// (ogi.cpp's models, shadows.cpp: drawn for it though the first camera's drawing culled it)
+void SecondViewSees(InstanceContext* instance);
+bool SeenBySecondView(const InstanceContext* instance);
 // The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
 // the camera that character's player sees (the game reads the chunk's last drawn camera, the other player's half the frames); none
 // otherwise (the game's own)

@@ -18,6 +18,10 @@
 #include "retail/libc.h"
 #include "gcc2.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 EABI_EXPORT(FUN_001e9e90, &SceneryMeshes::SetBox);
 
 extern "C"
@@ -207,8 +211,25 @@ u32 DrawCellInstancesCulled(InstanceContext** list, ChunkView* view)
         }
         else
         {
+#ifdef TWIN_NATIVE
+            // Two players: the second camera's drawing noted apart, the flag left the first camera's (coop/secondplayer.cpp)
+            if (Coop::DrawingSecondView())
+            {
+                if (inView)
+                {
+                    Coop::SecondViewSees(instance);
+                    SetSeen(instance, static_cast<u32>(distance));
+                }
+            }
+            else
+            {
+                instance->flags.inDrawnCell = inView;
+                SetSeen(instance, static_cast<u32>(distance));
+            }
+#else
             instance->flags.inDrawnCell = inView;
             SetSeen(instance, static_cast<u32>(distance));
+#endif
             ReferencedObjectFlags flags = instance->flags;
             if (flags.visible && !flags.asleep && inView)
             {

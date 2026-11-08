@@ -242,6 +242,10 @@ u32 ModelNode::Update(TimeClock* clock)
 
     InstanceContext* instance = owner;
     u32 inDrawnCell = instance->flags.inDrawnCell;
+#ifdef TWIN_NATIVE
+    // Two players: kept for either camera's drawing (the flag says the last camera's: each drawing culls it for its own view)
+    inDrawnCell = inDrawnCell != 0 || Coop::SeenBySecondView(instance) ? 1u : 0u;
+#endif
     u32 visible = instance->flags.visible;
     if (own == nullptr)
     {

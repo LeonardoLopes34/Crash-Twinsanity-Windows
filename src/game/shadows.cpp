@@ -340,7 +340,13 @@ u32 ShadowNode::Update(TimeClock* clock)
 {
     InstanceContext* instance = owner;
     ReferencedObjectFlags flags = instance->flags;
-    if (!flags.shadowActive || !flags.visible || !flags.inDrawnCell)
+#ifdef TWIN_NATIVE
+    // Two players: cast for either camera's drawing
+    bool inDrawnCell = flags.inDrawnCell || Coop::SeenBySecondView(instance);
+#else
+    bool inDrawnCell = flags.inDrawnCell;
+#endif
+    if (!flags.shadowActive || !flags.visible || !inDrawnCell)
     {
         return GameNode::Update(clock);
     }

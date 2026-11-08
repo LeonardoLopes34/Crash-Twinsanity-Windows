@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 namespace Coop
 {
@@ -220,8 +221,51 @@ bool TwoViewsOn(GameController* controller, InstanceContext* second, InstanceCon
 }
 }
 
+namespace
+{
+bool g_TwoViews = false;
+// The drawings counted, and the drawing each instance was last in the second camera's view at
+u32 g_Drawings = 0;
+std::unordered_map<const InstanceContext*, u32> g_SecondSeen;
+// Drawings an instance stays drawn for after the second camera last saw it (its drawings are every other one)
+constexpr u32 SeenDrawings = 4;
+}
+
+bool TwoViews()
+{
+    return g_TwoViews;
+}
+
+void SecondViewSees(InstanceContext* instance)
+{
+    g_SecondSeen[instance] = g_Drawings;
+}
+
+bool SeenBySecondView(const InstanceContext* instance)
+{
+    if (!g_TwoViews)
+    {
+        return false;
+    }
+
+    auto found = g_SecondSeen.find(instance);
+    return found != g_SecondSeen.end() && g_Drawings - found->second <= SeenDrawings;
+}
+
+bool DrawingSecondView()
+{
+    return g_Lent;
+}
+
 void BeforeDraw()
 {
+    g_Drawings++;
+    // (Forgotten now and then: instances let go leave their entries, the memory taken by others)
+    if (!g_TwoViews || g_Drawings % 600 == 0)
+    {
+        g_SecondSeen.clear();
+    }
+
     g_Drawn = 0;
     g_Lent = false;
     if (g_Drawing != 1)
@@ -284,6 +328,7 @@ int TwoViewsFrame()
     InstanceContext* second = SecondPlayer();
     InstanceContext* secondCamera = CameraOf(second);
     bool on = TwoViewsOn(controller, second, secondCamera);
+    g_TwoViews = on;
     // Why there's one view while there's a second player (once every 3 s)
     static u32 calls = 0;
     calls++;
