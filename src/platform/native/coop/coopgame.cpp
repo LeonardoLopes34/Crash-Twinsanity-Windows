@@ -1329,6 +1329,9 @@ std::string GateLine(double now)
 }
 }
 
+extern double g_ConnectedAt;
+bool TestDue(const char* variable, int part, bool* done);
+
 void GameFrame()
 {
     StartOnce();
@@ -1460,6 +1463,15 @@ void GameFrame()
 
         g_PausingForPartner = false;
         lastState = state;
+    }
+
+    // $TWIN_COOP_TEST_DIE=seconds (tests): back to the checkpoint that long after connecting, as a death does
+    g_ConnectedAt = connectedAt;
+    static bool testDied = false;
+    if (controller != nullptr && state == GameController::StatePlaying && TestDue("TWIN_COOP_TEST_DIE", 0, &testDied))
+    {
+        Native::Log("coop: test: dying");
+        controller->RestartFromCheckpoint();
     }
 
     // The carrier went back to their checkpoint: the backpack's rider goes back to theirs too (the two come back together)
@@ -1618,8 +1630,47 @@ bool WumpaPicked(InstanceContext* from, unsigned count)
     return false;
 }
 
+// $TWIN_COOP_TEST_PAUSE="pause,resume" (tests): this player pauses that many seconds after connecting, and resumes at the second
+double TestSeconds(const char* variable, int part)
+{
+    const char* setting = std::getenv(variable);
+    if (setting == nullptr)
+    {
+        return -1;
+    }
+
+    for (int at = 0; at < part && setting != nullptr; at++)
+    {
+        setting = std::strchr(setting, ',');
+        setting = setting != nullptr ? setting + 1 : nullptr;
+    }
+
+    return setting != nullptr ? std::atof(setting) : -1;
+}
+
+double g_ConnectedAt = -1;
+
+bool TestDue(const char* variable, int part, bool* done)
+{
+    double at = TestSeconds(variable, part);
+    if (*done || at < 0 || g_ConnectedAt < 0 || Now() - g_ConnectedAt < at)
+    {
+        return false;
+    }
+
+    *done = true;
+    return true;
+}
+
 bool TakePartnerPause()
 {
+    static bool testPaused = false;
+    if (TestDue("TWIN_COOP_TEST_PAUSE", 0, &testPaused))
+    {
+        Native::Log("coop: test: pausing");
+        return true;
+    }
+
     if (!g_Session.Connected() || !g_Session.TakePause())
     {
         return false;
@@ -1631,6 +1682,13 @@ bool TakePartnerPause()
 
 bool TakePartnerResume()
 {
+    static bool testResumed = false;
+    if (g_PausedBy == PausedBy::Me && TestDue("TWIN_COOP_TEST_PAUSE", 1, &testResumed))
+    {
+        Native::Log("coop: test: resuming");
+        return true;
+    }
+
     // A resume for a pause that wasn't the partner's (both paused at once): this player's own stands
     bool resume = g_Session.TakeResume();
     return resume && g_PausedBy == PausedBy::Partner;
@@ -1745,6 +1803,13 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
         return false;
     }
 
+    // Only cutscenes that start from play (the title's flyby and the menus' scenes go on as they do)
+    GameController* controller = G_GameController;
+    if (controller == nullptr || controller->State() != GameController::StatePlaying)
+    {
+        return false;
+    }
+
     bool startsCutscene = false;
     for (const ScriptCommand* command = body->commands; command != nullptr && !startsCutscene; command = command->next)
     {
@@ -1777,6 +1842,13 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
         Native::Log("coop: cutscene %s (%08X) starts", name.c_str(), key);
         ShowLine("");
         return false;
+    }
+
+    static uint32_t loggedHold = 0;
+    if (loggedHold != key)
+    {
+        loggedHold = key;
+        Native::Log("coop: cutscene %s (%08X) held: waiting for the partner", name.c_str(), key);
     }
 
     return true;
