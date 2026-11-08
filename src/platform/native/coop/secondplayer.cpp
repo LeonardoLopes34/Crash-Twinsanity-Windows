@@ -26,6 +26,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -330,7 +331,10 @@ struct Orbit
 };
 Orbit g_Orbits[2];
 // (Farther and higher than the first try: the players felt they were under the character)
-constexpr float OrbitDistance = 7.5f;
+// (9 after the players asked for 20% more than 7.5)
+constexpr float OrbitDistance = 9.0f;
+// The mouse's turn at sensitivity 5: radians for each point it moves (about 0.17 degrees: a 360 in 2100 points)
+constexpr float RadiansPerPoint = 0.0030f;
 constexpr float TargetHeight = 1.7f;
 constexpr float StartPitch = 0.42f;
 constexpr float TurnSpeed = 3.4f;
@@ -405,35 +409,40 @@ void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera
         orbit.camera = camera;
     }
 
-    // The stick: right turns the view right (the heading toward the camera's right), up looks up
+    // The stick: right turns the view right (the heading toward the camera's right), up looks up. The stick's turn is a speed (a
+    // push over time); the mouse's is the angle itself (below): a flick turns as far as it went, the slowest move as little
     float turn = StickOf(pad, false);
     float look = StickOf(pad, true);
-    // The first player's mouse: its own push, not cut at the stick's end (a quick flick turns quickly). The game takes the mouse
-    // the other way on both axes to stand for its stick (mouselook.cpp: the PS2's stick moves the camera round Crash, the other
-    // way to a look), this camera's stick turns the look itself: taken back here (it came out crossed: left looked right, up down).
-    // While the mouse moves, the stick's report (the mouse in it too, taken the game's way) isn't read
+    float angle = turn * TurnSpeed * seconds;
+    float pitchBy = look * PitchSpeed * seconds;
+    // The first player's mouse: the motion as it came (not the stick's conversion, which cut a fast move at the stick's end:
+    // a flick hardly turned it), an angle for each point of it, the sensitivity option's (1 to 10, 5 the middle) scaling the angle.
+    // The directions as the stick's conversion gave them (left turns left, up looks up; "invert" options kept). While the mouse
+    // moves, the stick's report (the mouse in it too, in the game's way) isn't read
     if (player == 0)
     {
         float mouseX = 0.0f;
         float mouseY = 0.0f;
-        NativeUi::LastMouseLook(&mouseX, &mouseY);
+        NativeUi::TakeRawMouseLook(&mouseX, &mouseY);
         static u64 mouseAt = 0;
         if (mouseX != 0.0f || mouseY != 0.0f)
         {
             mouseAt = now;
-            turn = -mouseX;
-            look = -mouseY;
+            float perPoint = RadiansPerPoint * static_cast<float>(std::max<int>(1, NativeUi::GetOption(NativeUi::OptionMouseSensitivity))) /
+                             5.0f;
+            angle = mouseX * perPoint * (NativeUi::IsOn(NativeUi::OptionInvertCameraX) ? -1.0f : 1.0f);
+            pitchBy = mouseY * perPoint * (NativeUi::IsOn(NativeUi::OptionInvertMouseY) ? -1.0f : 1.0f);
         }
         else if (now - mouseAt < 150000000ull)
         {
-            turn = 0.0f;
-            look = 0.0f;
+            angle = 0.0f;
+            pitchBy = 0.0f;
         }
     }
+
     Vector4 heading = {orbit.headingX, 0.0f, orbit.headingZ, 0.0f};
-    if (turn != 0.0f)
+    if (angle != 0.0f)
     {
-        float angle = turn * TurnSpeed * seconds;
         Vector4 right = Unit(CrossOf(up, heading));
         right = {right.x * orbit.handed, 0.0f, right.z * orbit.handed, 0.0f};
         heading = Unit({heading.x * std::cos(angle) + right.x * std::sin(angle), 0.0f,
@@ -443,7 +452,7 @@ void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera
     }
 
     // (The report's y: down is larger)
-    orbit.pitch = std::fmax(LowestPitch, std::fmin(HighestPitch, orbit.pitch + look * PitchSpeed * seconds));
+    orbit.pitch = std::fmax(LowestPitch, std::fmin(HighestPitch, orbit.pitch + pitchBy));
     Vector4 forward = Unit({heading.x * std::cos(orbit.pitch), -std::sin(orbit.pitch), heading.z * std::cos(orbit.pitch), 0.0f});
     Vector4 at = {target.x - forward.x * OrbitDistance, target.y - forward.y * OrbitDistance, target.z - forward.z * OrbitDistance,
                   1.0f};

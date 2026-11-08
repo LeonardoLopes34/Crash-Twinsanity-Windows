@@ -139,6 +139,9 @@ void ReadGamepadOnly(SDL_Gamepad* gamepad, BoundPad* pad);
 // The mouse's look at the last read in play, as a stick's push not cut at the stick's end (0 when it didn't move; the third person
 // camera's for the first player: coop/secondplayer.cpp)
 void LastMouseLook(f32* x, f32* y);
+// The mouse's motion in points since the last call, as it came (not turned into a stick's push: mouselook.cpp): what the third
+// person camera turns by, a flick as far as it went
+void TakeRawMouseLook(f32* dx, f32* dy);
 // A gamepad stick's bytes (its circle) moved out to the DualShock 2's square (bindings.cpp)
 void Squared(u8* x, u8* y);
 // The level sweep (sweep.cpp, $TWIN_SWEEP_LEVEL): whether it runs, its frame (the warp, the time played, the exit) and its scripted

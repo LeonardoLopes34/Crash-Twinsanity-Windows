@@ -27,6 +27,9 @@ using Clock = std::chrono::steady_clock;
 // The motion since the last read (the window's points), counted only while the window holds the mouse
 std::atomic<f32> g_DeltaX{0.0f};
 std::atomic<f32> g_DeltaY{0.0f};
+// The same motion kept apart for the third person camera (coop/secondplayer.cpp): taken by it, not by the stick's conversion
+std::atomic<f32> g_RawX{0.0f};
+std::atomic<f32> g_RawY{0.0f};
 std::atomic<bool> g_Relative{false};
 // The wheel's turns since they were taken, counted in play
 std::atomic<s32> g_WheelUp{0};
@@ -65,6 +68,8 @@ bool WatchMouseLook(void*, SDL_Event* event)
         {
             AddAtomic(g_DeltaX, event->motion.xrel);
             AddAtomic(g_DeltaY, event->motion.yrel);
+            AddAtomic(g_RawX, event->motion.xrel);
+            AddAtomic(g_RawY, event->motion.yrel);
         }
 
         break;
@@ -182,6 +187,12 @@ void MouseLookFrame()
 bool MouseLookActive()
 {
     return g_Relative;
+}
+
+void TakeRawMouseLook(f32* dx, f32* dy)
+{
+    *dx = g_RawX.exchange(0.0f);
+    *dy = g_RawY.exchange(0.0f);
 }
 
 bool MouseLookStick(f32* x, f32* y)
