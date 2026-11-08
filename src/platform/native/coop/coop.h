@@ -28,6 +28,9 @@ extern bool g_SpawningSecondPlayer;
 bool SecondPlayerWanted();
 // The second player's character (none while it isn't in play)
 InstanceContext* SecondPlayer();
+// The character an instance's sight and aim go to (conditionchecks.cpp: enemies looking for the player): the nearer of the two
+// players on foot (the played one when there's no second, or the second rides in the backpack)
+InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played);
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();

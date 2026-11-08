@@ -646,6 +646,28 @@ namespace
 const ModelNode* g_SecondModel = nullptr;
 }
 
+InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
+{
+    InstanceContext* second = g_SecondModel != nullptr ? SecondPlayer() : nullptr;
+    if (from == nullptr || played == nullptr || second == nullptr || g_Ride.rider >= 0 || from->place == nullptr ||
+        played->place == nullptr || second->place == nullptr || from->chunk == nullptr)
+    {
+        return played;
+    }
+
+    auto squared = [](ObjectPlace* a, ObjectPlace* b)
+    {
+        a->SyncPosition();
+        b->SyncPosition();
+        float dx = a->position.x - b->position.x;
+        float dy = a->position.y - b->position.y;
+        float dz = a->position.z - b->position.z;
+        return dx * dx + dy * dy + dz * dz;
+    };
+
+    return squared(from->place, second->place) < squared(from->place, played->place) ? second : played;
+}
+
 bool TintsGreen(const ModelNode* node)
 {
     return node != nullptr && node == g_SecondModel;

@@ -30,6 +30,7 @@
 #include <cstdint>
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "fixes.h"
 #include "ui/nativeui.h"
 #endif
@@ -280,6 +281,16 @@ NodeList* NodesOf(InstanceContext* instance)
 InstanceContext* PlayedInstance()
 {
     return Progress()->Instance(Progress()->play.character);
+}
+
+// The character played an instance looks at, aims at or hunts: with two players on this PC the nearer of the two (coop.h)
+InstanceContext* PlayedNear(GameNode* node)
+{
+    InstanceContext* played = PlayedInstance();
+#ifdef TWIN_NATIVE
+    played = Coop::NearerPlayer(node != nullptr ? node->owner : nullptr, played);
+#endif
+    return played;
 }
 
 bool CharacterDead(AgentNode* character)
@@ -822,6 +833,13 @@ f32 RidesVehicleCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 f32 IsPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
     InstanceContext* player = PlayerInstance();
+#ifdef TWIN_NATIVE
+    // Two players on this PC: the second player's character is a player too (its own scripts: checkpoints, its death)
+    if (node->owner != nullptr && node->owner == Coop::SecondPlayer())
+    {
+        return 1.0f;
+    }
+#endif
     return YesNo(node->owner == player);
 }
 
@@ -1761,6 +1779,14 @@ f32 TriggeredByOtherCharacterCondition::Check(GameNode* node, BehaviourLevel*, c
         return 0.0f;
     }
 
+#ifdef TWIN_NATIVE
+    // Two players on this PC: the second player's character triggers things as the player does
+    if (originator == Coop::SecondPlayer())
+    {
+        return 0.0f;
+    }
+#endif
+
     return YesNo(Progress()->play.pairing == PairingAlone);
 }
 
@@ -2205,7 +2231,7 @@ bool FocusPositionOf(ObjectNode* object, Vector4* position)
 // How far the instance's forward axis points at the played character's eyes (none: none)
 f32 MeFacingPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2218,7 +2244,7 @@ f32 MeFacingPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 
 f32 PlayerFacingMeCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2232,7 +2258,7 @@ f32 PlayerFacingMeCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 // How far the played character's x axis points at the instance's eyes
 f32 PlayerSideOffsetCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2246,7 +2272,7 @@ f32 PlayerSideOffsetCondition::Check(GameNode* node, BehaviourLevel*, const u32*
 // 1 when nothing (of the sight's surfaces) is between the eyes of the instance and of the played character
 f32 ClearLineOfSightToPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2265,7 +2291,7 @@ f32 ClearLineOfSightToPlayerCondition::Check(GameNode* node, BehaviourLevel*, co
 // Twice the threshold when the instance faces the played character more than it and the collision doesn't block the view
 f32 CanSeePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2297,7 +2323,7 @@ f32 CanSeePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 // one isn't checked once it's found)
 f32 PlayerVisibleCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2373,7 +2399,7 @@ f32 SightFromBeside(GameNode* node, bool right)
 {
     constexpr f32 NearSquared = 625.0f;
     constexpr f32 BlockedShare = Rounded(1.8);
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     InstanceContext* instance = node->owner;
     if (!instance->flags.inDrawnCell)
     {
@@ -2459,7 +2485,7 @@ f32 PlayerVisibleFromRightCondition::Check(GameNode* node, BehaviourLevel*, cons
 // How far above the played character the instance is (none: none)
 f32 HeightAbovePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2472,7 +2498,7 @@ f32 HeightAbovePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32
 // How far the exit point of the parameter's slot points at the played character's eyes
 f32 HeadLookingAtPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     Vector4 head;
     Vector4 direction;
     if (played == nullptr || ExitPointPlace(node->owner, ExitSlot(this), &head, &direction) == 0)
@@ -2487,7 +2513,7 @@ f32 HeadLookingAtPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u
 // its feet) more than it and the collision doesn't block the view
 f32 HeadCanSeePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     Vector4 head;
     Vector4 direction;
     if (played == nullptr || ExitPointPlace(node->owner, ExitSlot(this), &head, &direction) == 0)
@@ -2520,7 +2546,7 @@ f32 HeadCanSeePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*
 f32 HeadCanSeeNearPlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
     constexpr f32 NearSquared = 1600.0f;
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     Vector4 head;
     Vector4 direction;
     if (played == nullptr || ExitPointPlace(node->owner, ExitSlot(this), &head, &direction) == 0)
@@ -2561,7 +2587,7 @@ f32 HeadCanSeeNearPlayerCondition::Check(GameNode* node, BehaviourLevel*, const 
 // How far the played character's exit point of the parameter's slot points at the instance's eyes
 f32 PlayerHeadLookingAtMeCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     Vector4 head;
     Vector4 direction;
     if (played == nullptr || ExitPointPlace(played, ExitSlot(this), &head, &direction) == 0)
@@ -2576,7 +2602,7 @@ f32 PlayerHeadLookingAtMeCondition::Check(GameNode* node, BehaviourLevel*, const
 // character's own eye height above the instance's feet) and the collision doesn't block the view
 f32 PlayerHeadCanSeeMeCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     Vector4 head;
     Vector4 direction;
     if (played == nullptr || ExitPointPlace(played, ExitSlot(this), &head, &direction) == 0)
@@ -2717,7 +2743,7 @@ f32 FocusPositionToPlayerDistanceSquaredCondition::Check(GameNode* node, Behavio
 // The node's speed less the played character's (its vehicle's velocity when it rides one, else its own)
 f32 SpeedAbovePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -2745,7 +2771,7 @@ f32 SpeedAbovePlayerCondition::Check(GameNode* node, BehaviourLevel*, const u32*
 // 1 when the played character is nearer to another key than to the current one
 f32 PlayerNearerAnotherKeyCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
@@ -3874,7 +3900,7 @@ f32 MeToFocusSqrDistCondition::Check(GameNode* node, BehaviourLevel*, const u32*
 // Twice the threshold when the played character faces the instance more than it and nothing blocks the view (their eyes)
 f32 PlayerCanSeeMeCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    InstanceContext* played = PlayedInstance();
+    InstanceContext* played = PlayedNear(node);
     if (played == nullptr)
     {
         return 0.0f;
