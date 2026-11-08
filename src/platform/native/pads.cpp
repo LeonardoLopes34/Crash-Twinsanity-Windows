@@ -435,6 +435,101 @@ s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
     // Online co-op's tests: the left stick turned round on its own ($TWIN_COOP_TEST_RUN)
     Coop::TestStick(&leftX, &leftY);
 
+    // The second player on this PC (coop/secondplayer.cpp) shares the game's own pad: its Start pauses in play; a pause is the
+    // pauser's alone (only they move in its menu and resume); the menus and cutscenes take either player's buttons
+    if (Coop::SecondPlayerWanted() && g_SecondOpen && g_SecondGamepad != nullptr)
+    {
+        NativeUi::BoundPad second;
+        NativeUi::ReadGamepadOnly(g_SecondGamepad, &second);
+        // $TWIN_P2_TEST_START="s1,s2,..." (tests): the second player's Start held for a moment at each of those seconds
+        static const char* testStart = std::getenv("TWIN_P2_TEST_START");
+        if (testStart != nullptr)
+        {
+            double seconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+            for (const char* at = testStart; at != nullptr && *at != 0;)
+            {
+                double when = std::atof(at);
+                if (seconds >= when && seconds < when + 0.2)
+                {
+                    second.buttons |= NativeUi::PadBitStart;
+                }
+
+                at = std::strchr(at, ',');
+                at = at != nullptr ? at + 1 : nullptr;
+            }
+        }
+
+        auto centred = [](u8 x, u8 y)
+        {
+            auto near = [](u8 value) { return value > 0x60 && value < 0xA0; };
+            return near(x) && near(y);
+        };
+
+        static int pausedBy = 0;
+        static bool firstStartWas = false;
+        static bool secondStartWas = false;
+        constexpr u32 PadBitStart = NativeUi::PadBitStart;
+        bool firstStart = (buttons & PadBitStart) != 0;
+        bool secondStart = (second.buttons & PadBitStart) != 0;
+        bool firstPressed = firstStart && !firstStartWas;
+        bool secondPressed = secondStart && !secondStartWas;
+        firstStartWas = firstStart;
+        secondStartWas = secondStart;
+        int mode = Coop::SharedPadMode();
+        static int modeWas = -1;
+        if (mode != modeWas)
+        {
+            modeWas = mode;
+            Native::Log("second player: the shared pad %s", mode == Coop::PadPlaying ? "in play (its Start pauses)"
+                                                          : mode == Coop::PadPaused
+                                                              ? (pausedBy == 2 ? "paused by player 2 (theirs alone)"
+                                                                               : "paused by player 1 (theirs alone)")
+                                                              : "in the menus (both)");
+        }
+
+        switch (mode)
+        {
+        case Coop::PadPlaying:
+            // (Who pressed Start last in play: the pause that follows is theirs)
+            if (firstPressed || secondPressed)
+            {
+                pausedBy = firstPressed ? 1 : 2;
+            }
+
+            buttons |= second.buttons & PadBitStart;
+            break;
+        case Coop::PadPaused:
+            if (pausedBy == 2)
+            {
+                buttons = second.buttons;
+                leftX = second.leftX;
+                leftY = second.leftY;
+                rightX = second.rightX;
+                rightY = second.rightY;
+                pressure[PressureL2] = second.l2Pressure;
+                pressure[PressureR2] = second.r2Pressure;
+            }
+
+            break;
+        default:
+            pausedBy = 0;
+            buttons |= second.buttons;
+            if (centred(leftX, leftY))
+            {
+                leftX = second.leftX;
+                leftY = second.leftY;
+            }
+
+            if (centred(rightX, rightY))
+            {
+                rightX = second.rightX;
+                rightY = second.rightY;
+            }
+
+            break;
+        }
+    }
+
     // The digital buttons' pressures: fully pressed (the triggers have their own when a gamepad gives them)
     for (const PressureOf& of : Pressures)
     {

@@ -604,6 +604,18 @@ bool InCutscene()
 }
 }
 
+int SharedPadMode()
+{
+    GameController* controller = G_GameController;
+    u32 state = controller != nullptr ? controller->State() : GameController::NoState;
+    if (state == GameController::StatePlaying)
+    {
+        return PadPlaying;
+    }
+
+    return state == GameController::StatePaused ? PadPaused : PadMenus;
+}
+
 bool RidingHides(const ModelNode* node)
 {
     if (node == nullptr)

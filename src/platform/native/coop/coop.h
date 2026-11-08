@@ -48,6 +48,15 @@ void NoteSeen(InstanceContext* instance, unsigned distance, bool inView);
 // Whether the second camera saw an instance at its last drawings (ogi.cpp's models, shadows.cpp, agentnodes.cpp)
 bool SeenBySecondView(const InstanceContext* instance);
 // The backpack between the two players on this PC (Select, F5): whether a model or a shadow is the rider's (not drawn)
+// How the second player's gamepad shares the game's own pad (platform/native/pads.cpp): in play only its Start; in a pause the
+// pauser's alone; elsewhere (the menus, cutscenes, loads) either player's buttons
+enum SharedPad : int
+{
+    PadPlaying = 0,
+    PadPaused = 1,
+    PadMenus = 2,
+};
+int SharedPadMode();
 bool RidingHides(const ModelNode* node);
 bool RidingHidesShadow(const InstanceContext* instance);
 // The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
