@@ -1410,6 +1410,18 @@ void ShowFrame()
         g_PresentTarget = WindowForView(views[frame % 3]);
         PresentShown(before);
         g_PresentTarget = nullptr;
+        // One view for both (a cutscene, a pause, the menus, a load): the same picture in the second player's window too
+        if (views[frame % 3] == Coop::BothViews)
+        {
+            SDL_Window* second = WindowForView(1);
+            if (second != nullptr && second != g_Presenter.window)
+            {
+                g_PresentTarget = second;
+                PresentShown(before);
+                g_PresentTarget = nullptr;
+            }
+        }
+
         shown = &before;
     }
 

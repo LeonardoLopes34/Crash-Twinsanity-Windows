@@ -124,9 +124,34 @@ void Make()
         return;
     }
 
-    ChunkEntry* chunk = ChunkOfIndex(g_ChunkManager, agent->chunkIndex);
+    // Made in the chunk the first player is in now (its object's own chunk may be let go by then: the camera made in a chunk with no
+    // data crashed, 2026-11-08, after a walk into another area of the beach)
+    ChunkEntry* chunk = nullptr;
+    auto* manager = static_cast<ChunkManager*>(g_ChunkManager);
+    for (u32 i = 0; manager != nullptr && i < manager->count; i++)
+    {
+        ChunkEntry* entry = manager->entries[i];
+        if (entry != nullptr && entry->data != nullptr && entry->data->chunk == first->chunk)
+        {
+            chunk = entry;
+            break;
+        }
+    }
+
     if (chunk == nullptr)
     {
+        ChunkEntry* own = ChunkOfIndex(g_ChunkManager, agent->chunkIndex);
+        chunk = own != nullptr && own->data != nullptr && own->data->chunk != nullptr ? own : nullptr;
+    }
+
+    if (chunk == nullptr)
+    {
+        static int told = 0;
+        if (told++ % 60 == 0)
+        {
+            Native::Log("second player: not made yet (the first player's chunk isn't loaded)");
+        }
+
         return;
     }
 
@@ -392,6 +417,12 @@ int TwoViewsFrame()
     }
 
     g_Drawing = next;
+    // One view (a cutscene, a pause, the menus): both windows show it
+    if (!on && drawn == 0 && Wanted())
+    {
+        return BothViews;
+    }
+
     return drawn;
 }
 
@@ -563,14 +594,50 @@ ModelNode* ModelOf(InstanceContext* instance)
 }
 }
 
+namespace
+{
+// A cutscene playing: the second player isn't in it (hidden, put beside the first once it's over)
+bool InCutscene()
+{
+    GameController* controller = G_GameController;
+    return controller != nullptr && controller->State() == GameController::StateWatching;
+}
+}
+
 bool RidingHides(const ModelNode* node)
 {
-    return g_Ride.rider >= 0 && node != nullptr && node == ModelOf(g_Ride.instance);
+    if (node == nullptr)
+    {
+        return false;
+    }
+
+    if (g_Ride.rider >= 0 && node == ModelOf(g_Ride.instance))
+    {
+        return true;
+    }
+
+    if (!InCutscene())
+    {
+        return false;
+    }
+
+    InstanceContext* second = SecondPlayer();
+    return second != nullptr && node == ModelOf(second);
 }
 
 bool RidingHidesShadow(const InstanceContext* instance)
 {
-    return g_Ride.rider >= 0 && instance != nullptr && instance == g_Ride.instance;
+    if (instance == nullptr)
+    {
+        return false;
+    }
+
+    if (g_Ride.rider >= 0 && instance == g_Ride.instance)
+    {
+        return true;
+    }
+
+    return InCutscene() && instance == SecondPlayer();
 }
 
 void SecondPlayerFrame()
@@ -588,8 +655,15 @@ void SecondPlayerFrame()
     static bool returning = false;
     if (state != GameController::StatePlaying)
     {
-        if (state != GameController::StateWatching && state != GameController::StatePaused &&
-            state != GameController::StateWaiting)
+        // A cutscene: the second player comes back beside the first once it's over (the cutscene may have moved the first)
+        if (state == GameController::StateWatching && Valid())
+        {
+            EndRide();
+            returning = true;
+            playingFrames = 0;
+        }
+        else if (state != GameController::StateWatching && state != GameController::StatePaused &&
+                 state != GameController::StateWaiting)
         {
             returning = true;
             playingFrames = 0;

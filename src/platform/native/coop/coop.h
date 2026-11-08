@@ -31,6 +31,8 @@ InstanceContext* SecondPlayer();
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();
+// (TwoViewsFrame's answer while there's one view and a second player's window: the picture shown in both windows)
+constexpr int BothViews = 2;
 // Around the game's drawing (context.cpp's Render): the second player's camera given to the view only for the drawing of its frames,
 // the first player's given back right after (the game's own steps, triggers, rigs and chunk loading only ever see the first's)
 void BeforeDraw();
