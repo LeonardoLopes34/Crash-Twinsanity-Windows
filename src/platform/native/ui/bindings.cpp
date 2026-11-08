@@ -503,6 +503,15 @@ u8 Shaped(u8 value, f32 deadZone, f32 scale, bool inverted)
     return Clamp255(static_cast<int>(128.0f + signedValue * 127.0f + 0.5f));
 }
 
+f32 g_LastMouseLookX = 0.0f;
+f32 g_LastMouseLookY = 0.0f;
+
+void LastMouseLook(f32* x, f32* y)
+{
+    *x = g_LastMouseLookX;
+    *y = g_LastMouseLookY;
+}
+
 void ReadGamepadOnly(SDL_Gamepad* gamepad, BoundPad* pad)
 {
     Read();
@@ -733,8 +742,12 @@ void ReadBindings(const bool* keys, SDL_Gamepad* gamepad, BoundPad* pad)
     // deflection: the mouse's push past it is the camera's turn's boost
     f32 mouseX = 0.0f;
     f32 mouseY = 0.0f;
+    g_LastMouseLookX = 0.0f;
+    g_LastMouseLookY = 0.0f;
     if (playing && MouseLookStick(&mouseX, &mouseY))
     {
+        g_LastMouseLookX = IsOn(OptionInvertCameraX) ? -mouseX : mouseX;
+        g_LastMouseLookY = mouseY;
         keyboardUsed = true;
         mouseX = IsOn(OptionInvertCameraX) ? -mouseX : mouseX;
         auto further = [](u8 pad, f32 mouse, f32* boost)

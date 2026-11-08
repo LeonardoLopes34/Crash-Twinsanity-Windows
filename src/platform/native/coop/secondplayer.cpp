@@ -7,11 +7,13 @@
 #include "coop.h"
 
 #include "native.h"
+#include "ui/bindings.h"
 #include "ui/nativeui.h"
 
 #include "game/agents.h"
 #include "game/chunkdata.h"
 #include "game/chunkloading.h"
+#include "game/collision.h"
 #include "game/controllers.h"
 #include "game/followcamera.h"
 #include "game/gamecontroller.h"
@@ -311,8 +313,182 @@ bool DrawingSecondView()
     return g_Lent;
 }
 
+// The third person camera (both players, F7 the game's own instead): the right stick (the mouse too for the first player) turns it
+// round the character, it stays where it's left (nothing turns it on its own, nothing draws its eye), kept short of the walls. Its
+// matrix written over the game's camera each frame before the drawing (the game's rig still runs, its place overwritten); on foot
+// only (a vehicle's camera the game's own)
+namespace
+{
+struct Orbit
+{
+    InstanceContext* camera = nullptr;
+    float headingX = 0.0f;
+    float headingZ = 1.0f;
+    float pitch = 0.3f;
+    float handed = 1.0f;
+    u64 last = 0;
+};
+Orbit g_Orbits[2];
+constexpr float OrbitDistance = 5.2f;
+constexpr float TargetHeight = 1.2f;
+constexpr float TurnSpeed = 3.4f;
+constexpr float PitchSpeed = 2.2f;
+constexpr float LowestPitch = -0.35f;
+constexpr float HighestPitch = 1.1f;
+// The surfaces that stop a camera (layout.h's SurfaceFlags::BlocksCamera)
+constexpr u32 BlocksCamera = 0x20;
+
+Vector4 CrossOf(const Vector4& a, const Vector4& b)
+{
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x, 0.0f};
+}
+
+float DotOf(const Vector4& a, const Vector4& b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Vector4 Unit(const Vector4& v)
+{
+    float length = std::sqrt(DotOf(v, v));
+    return length > 1e-6f ? Vector4{v.x / length, v.y / length, v.z / length, 0.0f} : Vector4{0.0f, 0.0f, 1.0f, 0.0f};
+}
+
+float StickOf(GamePad* pad, bool vertical)
+{
+    if (pad == nullptr || pad->info == nullptr)
+    {
+        return 0.0f;
+    }
+
+    // (The report's byte: 128 the middle; the game's own dead zone on top)
+    float value = (static_cast<float>(pad->info->report[vertical ? 5 : 4]) - 128.0f) / 127.0f;
+    value = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
+    return std::fabs(value) < 0.12f ? 0.0f : value;
+}
+
+void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera, GamePad* pad)
+{
+    Orbit& orbit = g_Orbits[player];
+    CharacterAgent* agent = AgentOf(character);
+    if (character == nullptr || camera == nullptr || character->place == nullptr || camera->place == nullptr || agent == nullptr ||
+        agent->vehicle != nullptr || character->chunk == nullptr)
+    {
+        orbit.camera = nullptr;
+        return;
+    }
+
+    u64 now = SDL_GetTicksNS();
+    float seconds = orbit.last != 0 ? static_cast<float>(now - orbit.last) / 1e9f : 0.0f;
+    orbit.last = now;
+    seconds = seconds > 0.1f ? 0.1f : seconds;
+    character->place->SyncPosition();
+    Vector4 target = character->place->position;
+    target.y += TargetHeight;
+    const Vector4 up = {0.0f, 1.0f, 0.0f, 0.0f};
+    // Taken over from where the game's camera is (no jump), and which way its axes go (its x axis the screen's right)
+    if (orbit.camera != camera)
+    {
+        RotateAndTranslate(camera->place);
+        const Matrix4x4& m = camera->place->matrix;
+        Vector4 side = {m.m[0][0], m.m[0][1], m.m[0][2], 0.0f};
+        Vector4 cameraUp = {m.m[1][0], m.m[1][1], m.m[1][2], 0.0f};
+        Vector4 forward = {m.m[2][0], m.m[2][1], m.m[2][2], 0.0f};
+        orbit.handed = DotOf(CrossOf(cameraUp, forward), side) >= 0.0f ? 1.0f : -1.0f;
+        Vector4 heading = Unit({forward.x, 0.0f, forward.z, 0.0f});
+        orbit.headingX = heading.x;
+        orbit.headingZ = heading.z;
+        orbit.pitch = std::asin(std::fmax(-1.0f, std::fmin(1.0f, -forward.y)));
+        orbit.pitch = std::fmax(LowestPitch, std::fmin(HighestPitch, orbit.pitch));
+        orbit.camera = camera;
+    }
+
+    // The stick: right turns the view right (the heading toward the camera's right), up looks up
+    float turn = StickOf(pad, false);
+    float look = StickOf(pad, true);
+    // The first player's mouse: its own push, not cut at the stick's end (a quick flick turns quickly)
+    if (player == 0)
+    {
+        float mouseX = 0.0f;
+        float mouseY = 0.0f;
+        NativeUi::LastMouseLook(&mouseX, &mouseY);
+        if (mouseX != 0.0f || mouseY != 0.0f)
+        {
+            turn = mouseX;
+            look = mouseY;
+        }
+    }
+    Vector4 heading = {orbit.headingX, 0.0f, orbit.headingZ, 0.0f};
+    if (turn != 0.0f)
+    {
+        float angle = turn * TurnSpeed * seconds;
+        Vector4 right = Unit(CrossOf(up, heading));
+        right = {right.x * orbit.handed, 0.0f, right.z * orbit.handed, 0.0f};
+        heading = Unit({heading.x * std::cos(angle) + right.x * std::sin(angle), 0.0f,
+                        heading.z * std::cos(angle) + right.z * std::sin(angle), 0.0f});
+        orbit.headingX = heading.x;
+        orbit.headingZ = heading.z;
+    }
+
+    // (The report's y: down is larger)
+    orbit.pitch = std::fmax(LowestPitch, std::fmin(HighestPitch, orbit.pitch + look * PitchSpeed * seconds));
+    Vector4 forward = Unit({heading.x * std::cos(orbit.pitch), -std::sin(orbit.pitch), heading.z * std::cos(orbit.pitch), 0.0f});
+    Vector4 at = {target.x - forward.x * OrbitDistance, target.y - forward.y * OrbitDistance, target.z - forward.z * OrbitDistance,
+                  1.0f};
+    // Kept short of a wall between the character and the camera
+    Vector4 hit;
+    f32 distance = 0.0f;
+    if (GetCollisionCheck(character->chunk, &target, &at, BlocksCamera, &distance, &hit, nullptr) != 0)
+    {
+        at = {hit.x + forward.x * 0.35f, hit.y + forward.y * 0.35f, hit.z + forward.z * 0.35f, 1.0f};
+    }
+
+    Vector4 side = Unit(CrossOf(up, forward));
+    side = {side.x * orbit.handed, side.y * orbit.handed, side.z * orbit.handed, 0.0f};
+    Vector4 cameraUp = Unit(CrossOf(forward, side));
+    if (cameraUp.y < 0.0f)
+    {
+        cameraUp = {-cameraUp.x, -cameraUp.y, -cameraUp.z, 0.0f};
+    }
+
+    Matrix4x4 m;
+    m.m[0][0] = side.x, m.m[0][1] = side.y, m.m[0][2] = side.z, m.m[0][3] = 0.0f;
+    m.m[1][0] = cameraUp.x, m.m[1][1] = cameraUp.y, m.m[1][2] = cameraUp.z, m.m[1][3] = 0.0f;
+    m.m[2][0] = forward.x, m.m[2][1] = forward.y, m.m[2][2] = forward.z, m.m[2][3] = 0.0f;
+    m.m[3][0] = at.x, m.m[3][1] = at.y, m.m[3][2] = at.z, m.m[3][3] = 1.0f;
+    SetPlaceMatrix(camera->place, &m);
+}
+
+void OrbitCameras()
+{
+    GameController* controller = G_GameController;
+    bool playing = controller != nullptr && controller->State() == GameController::StatePlaying &&
+                   (controller->states.camera == GameController::CameraFollow ||
+                    controller->states.camera == GameController::CameraGameRig);
+    if (!playing || !FreeCamera())
+    {
+        g_Orbits[0].camera = nullptr;
+        g_Orbits[1].camera = nullptr;
+        return;
+    }
+
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    OrbitCamera(0, FirstPlayer(), ViewCamera(controller), pads != nullptr ? pads->pads[0] : nullptr);
+    InstanceContext* second = SecondPlayer();
+    if (second != nullptr)
+    {
+        OrbitCamera(1, second, CameraOf(second), pads != nullptr ? pads->pads[1] : nullptr);
+    }
+}
+}
+
 void BeforeDraw()
 {
+    if (Wanted())
+    {
+        OrbitCameras();
+    }
+
     g_Drawings++;
     // (Forgotten now and then: instances let go leave their entries, the memory taken by others)
     if (!g_TwoViews)

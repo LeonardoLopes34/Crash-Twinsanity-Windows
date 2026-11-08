@@ -370,6 +370,21 @@ s32 ReadSecond(u8* data)
         }
     }
 
+    // $TWIN_P2_TEST_LOOK=seconds (tests): the right stick pushed right for a second and a half at that time, then up for one
+    static const char* testLook = std::getenv("TWIN_P2_TEST_LOOK");
+    if (testLook != nullptr)
+    {
+        double since = static_cast<double>(SDL_GetTicks()) / 1000.0 - std::atof(testLook);
+        if (since >= 0.0 && since < 1.5)
+        {
+            bound.rightX = 0xFF;
+        }
+        else if (since >= 1.5 && since < 2.5)
+        {
+            bound.rightY = 0x00;
+        }
+    }
+
     return WriteReport(bound, leftX, leftY, data);
 }
 }

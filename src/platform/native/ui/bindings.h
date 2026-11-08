@@ -136,6 +136,9 @@ void ReadBindings(const bool* keys, SDL_Gamepad* gamepad, BoundPad* pad);
 // A gamepad alone by the bindings' buttons (the second player's: no keyboard, no mouse, no wheel taken, nothing of the first
 // player's state touched)
 void ReadGamepadOnly(SDL_Gamepad* gamepad, BoundPad* pad);
+// The mouse's look at the last read in play, as a stick's push not cut at the stick's end (0 when it didn't move; the third person
+// camera's for the first player: coop/secondplayer.cpp)
+void LastMouseLook(f32* x, f32* y);
 // A gamepad stick's bytes (its circle) moved out to the DualShock 2's square (bindings.cpp)
 void Squared(u8* x, u8* y);
 // The level sweep (sweep.cpp, $TWIN_SWEEP_LEVEL): whether it runs, its frame (the warp, the time played, the exit) and its scripted
