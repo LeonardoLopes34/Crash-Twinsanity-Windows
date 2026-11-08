@@ -1046,7 +1046,15 @@ bool BackpackPressed(int player)
     static bool was[2] = {false, false};
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
     GamePad* pad = pads != nullptr ? pads->pads[player] : nullptr;
-    bool down = pad != nullptr && pad->info != nullptr && (pad->now & (1u << PadSelect)) != 0;
+    bool down = false;
+    if (pad != nullptr && pad->info != nullptr)
+    {
+        // Select (View, Back), or both shoulders at once (L1 and R1: a pad whose Select didn't reach the game, through Parsec
+        // for one: the second player never got into the first's backpack by its button)
+        constexpr u32 Shoulders = (1u << PadL1) | (1u << PadR1);
+        down = (pad->now & (1u << PadSelect)) != 0 || (pad->now & Shoulders) == Shoulders;
+    }
+
     if (player == 0)
     {
         const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -1055,6 +1063,11 @@ bool BackpackPressed(int player)
 
     bool pressed = down && !was[player];
     was[player] = down;
+    if (pressed)
+    {
+        Native::Log("second player: the backpack button pressed by player %d", player + 1);
+    }
+
     return pressed;
 }
 
