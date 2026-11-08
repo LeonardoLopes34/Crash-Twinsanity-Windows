@@ -12,6 +12,10 @@
 #include "game/properties.h"
 #include "game/reference.h"
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The nodes of an instance's agent (kinds 0xC to 0x14): a game node and the agent it runs. The kinds' classes differ in their
 // kind and type numbers; the pay gates' also give their part a number of their properties when they get their instance and every
 // step, and the projectiles' aren't updated
@@ -235,6 +239,10 @@ u32 AgentNodeUpdate(AgentNode* node, TimeClock* clock)
     Agent* agent = node->agent;
     if (chunk != nullptr && chunk->flags.drawn == 0)
     {
+#ifdef TWIN_NATIVE
+        // Two players: not while the second camera sees it (the chunk's flag says the last camera's drawing)
+        if (!Coop::SeenBySecondView(instance))
+#endif
         instance->flags.inDrawnCell = 0;
     }
 

@@ -40,9 +40,10 @@ void AfterDraw();
 // in a drawn cell for either camera stays drawn
 bool TwoViews();
 bool DrawingSecondView();
-// An instance in view of the second player's camera at its drawing (scenery.cpp's culling), and whether it was at its last drawings
-// (ogi.cpp's models, shadows.cpp: drawn for it though the first camera's drawing culled it)
-void SecondViewSees(InstanceContext* instance);
+// An instance met by a camera's drawing (scenery.cpp's culling: in view or not, at a distance): its drawn cell flag and its seen
+// stamp (the distance the game's update rates go by) made both cameras' (in view of either, the nearer distance)
+void NoteSeen(InstanceContext* instance, unsigned distance, bool inView);
+// Whether the second camera saw an instance at its last drawings (ogi.cpp's models, shadows.cpp, agentnodes.cpp)
 bool SeenBySecondView(const InstanceContext* instance);
 // The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
 // the camera that character's player sees (the game reads the chunk's last drawn camera, the other player's half the frames); none

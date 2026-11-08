@@ -157,6 +157,14 @@ u32 DrawCellInstances(InstanceContext** list, ChunkView* view)
             flags.inDrawnCell = 1;
             SetSeen(instance, static_cast<u32>(distance));
             instance->flags = flags;
+#ifdef TWIN_NATIVE
+            // Two players: the nearer of the two cameras' distances (coop/secondplayer.cpp)
+            if (Coop::TwoViews())
+            {
+                Coop::NoteSeen(instance, static_cast<u32>(distance), true);
+                flags = instance->flags;
+            }
+#endif
             if (flags.visible && !flags.asleep && Draws(instance))
             {
                 count++;
@@ -212,14 +220,10 @@ u32 DrawCellInstancesCulled(InstanceContext** list, ChunkView* view)
         else
         {
 #ifdef TWIN_NATIVE
-            // Two players: the second camera's drawing noted apart, the flag left the first camera's (coop/secondplayer.cpp)
-            if (Coop::DrawingSecondView())
+            // Two players: in view of either camera, at the nearer camera's distance (coop/secondplayer.cpp)
+            if (Coop::TwoViews())
             {
-                if (inView)
-                {
-                    Coop::SecondViewSees(instance);
-                    SetSeen(instance, static_cast<u32>(distance));
-                }
+                Coop::NoteSeen(instance, static_cast<u32>(distance), inView);
             }
             else
             {

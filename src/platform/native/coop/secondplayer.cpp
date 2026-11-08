@@ -224,11 +224,22 @@ bool TwoViewsOn(GameController* controller, InstanceContext* second, InstanceCon
 namespace
 {
 bool g_TwoViews = false;
-// The drawings counted, and the drawing each instance was last in the second camera's view at
+// The drawings counted, and what each camera's drawing last made of each instance it met (when, how far, in view)
 u32 g_Drawings = 0;
-std::unordered_map<const InstanceContext*, u32> g_SecondSeen;
-// Drawings an instance stays drawn for after the second camera last saw it (its drawings are every other one)
+struct Sighting
+{
+    u32 drawing[2] = {0, 0};
+    u32 distance[2] = {0, 0};
+    bool inView[2] = {false, false};
+};
+std::unordered_map<const InstanceContext*, Sighting> g_Seen;
+// Drawings a camera's sighting counts for (each camera draws every other one)
 constexpr u32 SeenDrawings = 4;
+
+bool Recent(const Sighting& sighting, int view)
+{
+    return sighting.drawing[view] != 0 && g_Drawings - sighting.drawing[view] <= SeenDrawings;
+}
 }
 
 bool TwoViews()
@@ -236,9 +247,24 @@ bool TwoViews()
     return g_TwoViews;
 }
 
-void SecondViewSees(InstanceContext* instance)
+void NoteSeen(InstanceContext* instance, unsigned distance, bool inView)
 {
-    g_SecondSeen[instance] = g_Drawings;
+    int view = g_Lent ? 1 : 0;
+    Sighting& sighting = g_Seen[instance];
+    sighting.drawing[view] = g_Drawings;
+    sighting.distance[view] = distance;
+    sighting.inView[view] = inView;
+    u32 nearest = distance;
+    bool seen = inView;
+    int other = 1 - view;
+    if (Recent(sighting, other))
+    {
+        nearest = sighting.distance[other] < nearest ? sighting.distance[other] : nearest;
+        seen = seen || sighting.inView[other];
+    }
+
+    instance->seen = nearest;
+    instance->flags.inDrawnCell = seen ? 1 : 0;
 }
 
 bool SeenBySecondView(const InstanceContext* instance)
@@ -248,8 +274,8 @@ bool SeenBySecondView(const InstanceContext* instance)
         return false;
     }
 
-    auto found = g_SecondSeen.find(instance);
-    return found != g_SecondSeen.end() && g_Drawings - found->second <= SeenDrawings;
+    auto found = g_Seen.find(instance);
+    return found != g_Seen.end() && Recent(found->second, 1) && found->second.inView[1];
 }
 
 bool DrawingSecondView()
@@ -261,9 +287,16 @@ void BeforeDraw()
 {
     g_Drawings++;
     // (Forgotten now and then: instances let go leave their entries, the memory taken by others)
-    if (!g_TwoViews || g_Drawings % 600 == 0)
+    if (!g_TwoViews)
     {
-        g_SecondSeen.clear();
+        g_Seen.clear();
+    }
+    else if (g_Drawings % 600 == 0)
+    {
+        for (auto entry = g_Seen.begin(); entry != g_Seen.end();)
+        {
+            entry = Recent(entry->second, 0) || Recent(entry->second, 1) ? std::next(entry) : g_Seen.erase(entry);
+        }
     }
 
     g_Drawn = 0;
