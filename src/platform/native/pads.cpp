@@ -354,9 +354,8 @@ s32 ReadSecond(u8* data)
     }
 
     FindSecondGamepad();
-    static bool noKeys[SDL_SCANCODE_COUNT];
     NativeUi::BoundPad bound;
-    NativeUi::ReadBindings(noKeys, g_SecondGamepad, &bound);
+    NativeUi::ReadGamepadOnly(g_SecondGamepad, &bound);
     u8 leftX = bound.leftX;
     u8 leftY = bound.leftY;
     static const char* testRun = std::getenv("TWIN_P2_TEST_RUN");

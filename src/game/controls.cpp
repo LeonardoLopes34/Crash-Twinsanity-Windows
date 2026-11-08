@@ -11,6 +11,10 @@
 
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 EABI_EXPORT(FUN_00162da8, &ControlsHandler::Move);
 
 namespace
@@ -259,6 +263,13 @@ void CharacterControls::Frame(TimeClock*, GamePad* pad, InstanceContext* instanc
 
     ObjectPlace* place = instance->place;
     const Matrix4x4* view = &instance->chunk->matrix;
+#ifdef TWIN_NATIVE
+    // Two players: the stick read against the camera this character's player sees (coop/secondplayer.cpp)
+    if (const Matrix4x4* own = Coop::MoveView(instance))
+    {
+        view = own;
+    }
+#endif
     RotateAndTranslate(place);
     f32 length = __builtin_sqrtf(stick.x * stick.x + stick.y * stick.y + stick.z * stick.z);
     Vector4 world;

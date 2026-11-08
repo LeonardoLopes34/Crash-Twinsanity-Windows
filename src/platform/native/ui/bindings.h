@@ -133,6 +133,9 @@ struct BoundPad
 };
 
 void ReadBindings(const bool* keys, SDL_Gamepad* gamepad, BoundPad* pad);
+// A gamepad alone by the bindings' buttons (the second player's: no keyboard, no mouse, no wheel taken, nothing of the first
+// player's state touched)
+void ReadGamepadOnly(SDL_Gamepad* gamepad, BoundPad* pad);
 // A gamepad stick's bytes (its circle) moved out to the DualShock 2's square (bindings.cpp)
 void Squared(u8* x, u8* y);
 // The level sweep (sweep.cpp, $TWIN_SWEEP_LEVEL): whether it runs, its frame (the warp, the time played, the exit) and its scripted

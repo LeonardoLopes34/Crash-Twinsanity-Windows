@@ -21,6 +21,7 @@
 #include "retail/libc.h"
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "ui/nativeui.h"
 #endif
 
@@ -205,8 +206,15 @@ void GameContextPrototype::UpdatePrototype(bool playingMovie)
 
 void GameContextPrototype::EndFrame(bool playingMovie)
 {
+#ifdef TWIN_NATIVE
+    // (The second player's camera only for its frames' drawing: coop/secondplayer.cpp)
+    Coop::BeforeDraw();
+#endif
     G_GameRendererController->EndFrame();
     GameEndFrame(playingMovie);
+#ifdef TWIN_NATIVE
+    Coop::AfterDraw();
+#endif
     G_GameRendererController->AfterEndFrame();
     if (g_SaveManager != nullptr)
     {

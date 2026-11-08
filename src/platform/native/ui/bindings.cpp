@@ -503,6 +503,62 @@ u8 Shaped(u8 value, f32 deadZone, f32 scale, bool inverted)
     return Clamp255(static_cast<int>(128.0f + signedValue * 127.0f + 0.5f));
 }
 
+void ReadGamepadOnly(SDL_Gamepad* gamepad, BoundPad* pad)
+{
+    Read();
+    *pad = {};
+    pad->leftX = pad->leftY = pad->rightX = pad->rightY = BoundPad::StickMiddle;
+    if (gamepad == nullptr || Capturing() || SettingsOpen())
+    {
+        return;
+    }
+
+    for (u32 i = 0; i < BindingCount; i++)
+    {
+        const BindingInfo& info = Infos[i];
+        const Binding& binding = g_Bindings[i];
+        for (s32 button : {binding.button, binding.button2})
+        {
+            u8 pressure = 0;
+            if (!GamepadHolds(gamepad, button, &pressure))
+            {
+                continue;
+            }
+
+            // (The sticks' directions bound to buttons are the keyboard's way: the gamepad's sticks are read below)
+            if (info.stick == NoStick)
+            {
+                pad->buttons |= info.button;
+            }
+
+            if (button >= GamepadTriggerBase && pressure != 0)
+            {
+                if ((info.button & PadBitL2) != 0)
+                {
+                    pad->l2Pressure = pressure;
+                }
+                else if ((info.button & PadBitR2) != 0)
+                {
+                    pad->r2Pressure = pressure;
+                }
+            }
+        }
+    }
+
+    auto axis = [gamepad](SDL_GamepadAxis which) { return StickByte(SDL_GetGamepadAxis(gamepad, which)); };
+    u8 rawLeftX = axis(SDL_GAMEPAD_AXIS_LEFTX);
+    u8 rawLeftY = axis(SDL_GAMEPAD_AXIS_LEFTY);
+    u8 rawRightX = axis(SDL_GAMEPAD_AXIS_RIGHTX);
+    u8 rawRightY = axis(SDL_GAMEPAD_AXIS_RIGHTY);
+    f32 deadZone = static_cast<f32>(GetOption(OptionStickDeadZone)) * 0.05f;
+    Squared(&rawLeftX, &rawLeftY);
+    Squared(&rawRightX, &rawRightY);
+    pad->leftX = Shaped(rawLeftX, deadZone, 1.0f, false);
+    pad->leftY = Shaped(rawLeftY, deadZone, 1.0f, false);
+    pad->rightX = Shaped(rawRightX, deadZone, 1.0f, IsOn(OptionInvertCameraX));
+    pad->rightY = Shaped(rawRightY, deadZone, 1.0f, IsOn(OptionInvertCameraY));
+}
+
 void ReadBindings(const bool* keys, SDL_Gamepad* gamepad, BoundPad* pad)
 {
     Read();
@@ -697,15 +753,8 @@ void ReadBindings(const bool* keys, SDL_Gamepad* gamepad, BoundPad* pad)
         pad->rightY = further(pad->rightY, mouseY, &g_MouseBoostY);
     }
 
-    // Left Ctrl toggles walking for the keys' movement (keyboard play runs by default)
-    static bool walkKeyWas = false;
-    bool walkKey = walkHeld;
-    if (walkKey && !walkKeyWas && playing)
-    {
-        g_Walking = !g_Walking;
-    }
-
-    walkKeyWas = walkKey;
+    // Left Ctrl held walks for the keys' movement (keyboard play runs by default; let go, it runs again)
+    g_Walking = walkHeld && playing;
 
     // In a menu (the game's, the pause menu's) the camera's keys are the D-pad too: the arrows, Q and E navigate it
     if (!playing || MenuActiveRecently())

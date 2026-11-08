@@ -8,6 +8,7 @@ struct BehaviourLevel;
 struct ModelNode;
 struct InstanceContext;
 struct GraphState;
+struct Matrix4x4;
 
 namespace Coop
 {
@@ -30,6 +31,14 @@ InstanceContext* SecondPlayer();
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();
+// Around the game's drawing (context.cpp's Render): the second player's camera given to the view only for the drawing of its frames,
+// the first player's given back right after (the game's own steps, triggers, rigs and chunk loading only ever see the first's)
+void BeforeDraw();
+void AfterDraw();
+// The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
+// the camera that character's player sees (the game reads the chunk's last drawn camera, the other player's half the frames); none
+// otherwise (the game's own)
+const Matrix4x4* MoveView(InstanceContext* character);
 
 // The free camera (followrig.cpp; F7 turns it on and off, coop.ini's camera=original starts it off): on foot, the camera turns only
 // when the player turns it (the right stick, the mouse; the shoulder buttons still swing it behind the character), never on its

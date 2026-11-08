@@ -149,6 +149,9 @@ void Make()
         return;
     }
 
+    static int madeCount = 0;
+    madeCount++;
+    Native::Log("second player: made (%d made so far this run)", madeCount);
     g_Second.instance = made;
     g_Second.characterNode = static_cast<GameNode*>(GetGameNode(&made->nodes, NodeCharacter));
     auto* controls = static_cast<ControlsNode*>(GetGameNode(&made->nodes, NodeControls));
@@ -193,51 +196,107 @@ bool SecondPlayerWanted()
 // the game's own steps stay 60 a second, every other frame draws the same moment from the other camera)
 namespace
 {
+// The view the next frame's drawing is (1 the second player's), the one the last drawing was, and the first player's camera while
+// the second's is lent to the view for a drawing
 int g_Drawing = 0;
+int g_Drawn = 0;
+bool g_Lent = false;
+InstanceContext* g_FirstView = nullptr;
+
+InstanceContext* ViewCamera(GameController* controller)
+{
+    Reference* shown = controller != nullptr ? controller->view.cameraObject : nullptr;
+    return shown != nullptr ? static_cast<InstanceContext*>(shown->object) : nullptr;
+}
+
+// Whether there are two views now (the game shows its own rig most of the time in play, or the played character's follow camera:
+// either is the first view)
+bool TwoViewsOn(GameController* controller, InstanceContext* second, InstanceContext* secondCamera)
+{
+    return controller != nullptr && second != nullptr && secondCamera != nullptr && ViewCamera(controller) != nullptr &&
+           controller->State() == GameController::StatePlaying &&
+           (controller->states.camera == GameController::CameraFollow ||
+            controller->states.camera == GameController::CameraGameRig);
+}
+}
+
+void BeforeDraw()
+{
+    g_Drawn = 0;
+    g_Lent = false;
+    if (g_Drawing != 1)
+    {
+        return;
+    }
+
+    GameController* controller = G_GameController;
+    InstanceContext* second = SecondPlayer();
+    InstanceContext* secondCamera = CameraOf(second);
+    if (!TwoViewsOn(controller, second, secondCamera))
+    {
+        return;
+    }
+
+    g_FirstView = ViewCamera(controller);
+    AssignReference(&controller->view.cameraObject, secondCamera);
+    g_Lent = true;
+    g_Drawn = 1;
+}
+
+void AfterDraw()
+{
+    if (!g_Lent)
+    {
+        return;
+    }
+
+    g_Lent = false;
+    GameController* controller = G_GameController;
+    InstanceContext* back = g_FirstView != nullptr && InstanceLive(g_FirstView) ? g_FirstView : CameraOf(FirstPlayer());
+    if (controller != nullptr && back != nullptr)
+    {
+        AssignReference(&controller->view.cameraObject, back);
+    }
+}
+
+const Matrix4x4* MoveView(InstanceContext* character)
+{
+    InstanceContext* second = SecondPlayer();
+    if (second == nullptr || character == nullptr)
+    {
+        return nullptr;
+    }
+
+    // (Out of the drawing the view's camera is always the first player's)
+    InstanceContext* camera = character == second ? CameraOf(second) : ViewCamera(G_GameController);
+    if (camera == nullptr || camera->place == nullptr || g_Lent)
+    {
+        return nullptr;
+    }
+
+    RotateAndTranslate(camera->place);
+    return &camera->place->matrix;
 }
 
 int TwoViewsFrame()
 {
     GameController* controller = G_GameController;
     InstanceContext* second = SecondPlayer();
-    InstanceContext* firstCamera = CameraOf(FirstPlayer());
     InstanceContext* secondCamera = CameraOf(second);
-    // (The game shows its own rig most of the time in play, or the played character's follow camera: either is the first view)
-    bool on = controller != nullptr && second != nullptr && firstCamera != nullptr && secondCamera != nullptr &&
-              controller->State() == GameController::StatePlaying &&
-              (controller->states.camera == GameController::CameraFollow ||
-               controller->states.camera == GameController::CameraGameRig);
-    // The camera the first player sees, taken on the first player's frames (given back after each of the second's)
-    static InstanceContext* firstView = nullptr;
-    if (controller != nullptr && g_Drawing == 0)
-    {
-        firstView = controller->view.cameraObject != nullptr ? static_cast<InstanceContext*>(controller->view.cameraObject->object)
-                                                             : nullptr;
-    }
-
-    if (firstView != nullptr && !InstanceLive(firstView))
-    {
-        firstView = nullptr;
-    }
-
-    firstCamera = firstView != nullptr ? firstView : firstCamera;
+    bool on = TwoViewsOn(controller, second, secondCamera);
     // Why there's one view while there's a second player (once every 3 s)
     static u32 calls = 0;
     calls++;
     if (!on && second != nullptr && calls % 360 == 1)
     {
-        Native::Log("second player: one view (first camera %s, second camera %s, state %u, camera kind %u)",
-                    firstCamera != nullptr ? "there" : "none", secondCamera != nullptr ? "there" : "none",
+        Native::Log("second player: one view (view camera %s, second camera %s, state %u, camera kind %u)",
+                    ViewCamera(controller) != nullptr ? "there" : "none", secondCamera != nullptr ? "there" : "none",
                     controller != nullptr ? controller->State() : 99u,
                     controller != nullptr ? static_cast<unsigned>(controller->states.camera) : 99u);
     }
 
-    int drawn = g_Drawing;
+    int drawn = g_Drawn;
     int next = on ? 1 - g_Drawing : 0;
-    if (next != g_Drawing && controller != nullptr && (next == 1 ? secondCamera : firstCamera) != nullptr)
-    {
-        AssignReference(&controller->view.cameraObject, next == 1 ? secondCamera : firstCamera);
-    }
 
     // 120 frames a second while there are two views (each window then 60)
     static bool rateSet = false;
@@ -266,17 +325,51 @@ void SecondPlayerFrame()
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;
     static int playingFrames = 0;
+    // Out of play since it was there (a death's restart, a level's load): put beside the first player again once play is back, the
+    // same character (made again only when it's gone: a second made each time stayed, a crowd of them after a few deaths)
+    static bool returning = false;
     if (state != GameController::StatePlaying)
     {
-        // Out of play (loading, restarting, a menu): forgotten when it's gone; a cutscene or a pause keeps it
         if (state != GameController::StateWatching && state != GameController::StatePaused &&
             state != GameController::StateWaiting)
         {
-            g_Second = Second();
+            returning = true;
             playingFrames = 0;
         }
 
         return;
+    }
+
+    if (returning && Valid())
+    {
+        if (++playingFrames < SettleFrames)
+        {
+            return;
+        }
+
+        returning = false;
+        playingFrames = 0;
+        InstanceContext* first = FirstPlayer();
+        InstanceContext* second = g_Second.instance;
+        if (first != nullptr && first->place != nullptr && second->place != nullptr)
+        {
+            first->place->SyncPosition();
+            second->place->SyncPosition();
+            Vector4 to = first->place->position;
+            to.x += BesideFirst;
+            if (second->place->MoveTo(&to))
+            {
+                QueueObject(second);
+            }
+
+            Native::Log("second player: back in play, put beside the first at (%.1f, %.1f, %.1f)", to.x, to.y, to.z);
+        }
+    }
+    else if (returning)
+    {
+        // Gone while out of play (its chunk let go): made again below
+        returning = false;
+        playingFrames = 0;
     }
 
     if (Valid())
