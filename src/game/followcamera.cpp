@@ -12,6 +12,11 @@
 #include "game/place.h"
 #include "game/reference.h"
 
+#ifdef TWIN_NATIVE
+// The free camera on foot this frame (followrig.cpp)
+bool FreeCameraOnFoot();
+#endif
+
 EABI_EXPORT(FUN_00273738, &FollowCameraPositioner::Construct);
 EABI_EXPORT(FUN_0027c560, &FollowCameraPositioner::SetDistanceAndPitch);
 EABI_EXPORT(FUN_00274b20, &FollowCameraPositioner::Take);
@@ -931,6 +936,23 @@ u32 FollowCameraPositioner::PushByProbes(TimeClock* clock, const Vector4* point)
     ProbeHits hits;
     hits.value = ProbeRates(point, &pitchRate, &yawRate, &distanceRate, 1);
     f32 seconds = StepSeconds(clock);
+#ifdef TWIN_NATIVE
+    // The free camera (followrig.cpp): something in the way comes closer, never turns or tilts the camera (the player's turn stays;
+    // the distance goes back out once it's clear)
+    if (FreeCameraOnFoot())
+    {
+        constexpr f32 FreePullRate = -20.0f;
+        if ((hits.left != 0 || hits.right != 0 || hits.above != 0 || hits.below != 0 || hits.pullIn != 0) &&
+            distance.bits.enabled != 0)
+        {
+            distance.delta = FreePullRate * seconds;
+            distance.KeepWithin(distance.low, distance.high);
+            distance.bits.pushed = 1;
+        }
+
+        return hits.value;
+    }
+#endif
     if (hits.left != 0 || hits.right != 0)
     {
         if (yaw.delta != 0)
@@ -1011,6 +1033,25 @@ u32 FollowCameraPositioner::StepBlenders(TimeClock* clock)
 
         s32 yawGoal;
         TargetYaw(&yawGoal, this);
+#ifdef TWIN_NATIVE
+        // The free camera (followrig.cpp): the yaw stays where the player left it, the pitch goes back to the one the player last
+        // chose (pushed up by a wall, it comes back down)
+        static s32 chosenPitch = g_FollowCameraPitch;
+        if (FreeCameraOnFoot())
+        {
+            if (!(__builtin_fabsf(pitch.input) <= Epsilon))
+            {
+                chosenPitch = pitch.current;
+            }
+
+            pitchGoal = chosenPitch;
+            yawGoal = yaw.current;
+        }
+        else
+        {
+            chosenPitch = pitch.current;
+        }
+#endif
         s32 goal = pitchGoal;
         u32 pitchMoving = pitch.Step(clock, &goal, 1, state.cut);
         goal = yawGoal;

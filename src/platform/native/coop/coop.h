@@ -18,6 +18,13 @@ void GameFrame();
 // Whether online co-op is on (asked for, whether or not the partner is there)
 bool Active();
 
+// The free camera (followrig.cpp; F7 turns it on and off, coop.ini's camera=original starts it off): on foot, the camera turns only
+// when the player turns it (the right stick, the mouse; the shoulder buttons still swing it behind the character), never on its
+// own nor to the levels' camera triggers. With a vehicle (the Humiliskate, the Rollerbrawl, the hoverboard) the game's own
+bool FreeCamera();
+// Once a frame from wherever the keys are read (F7), even without co-op
+void CameraKeys();
+
 // The pause shared (gamecontroller.cpp): the partner paused (this game pauses as for its start button; once), the partner
 // resumed their pause (this game resumes; once), and whether this player may not resume (the partner's pause: only they do)
 bool TakePartnerPause();

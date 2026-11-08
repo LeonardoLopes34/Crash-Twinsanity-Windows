@@ -29,6 +29,16 @@ Sem `coop.ini` o jogo é o original.
 |---|---|
 | F5 | Entrar/sair da mochila do parceiro |
 | F6 | Na espera de uma cutscene: puxar o parceiro até você, ou ir até ele |
+| F7 | Câmera livre (ligada por padrão; `camera=original` no coop.ini ou `TWIN_CAMERA=original` começa desligada) |
+
+### Câmera livre
+
+A pé, a câmera só gira quando o jogador gira (analógico direito, mouse). Ela não volta sozinha para trás do personagem
+(`UpdateHolds`), não gira junto com a corrida (`StepWalkYaw`) e não aceita os gatilhos de câmera das fases (`OfferCamera`).
+Obstáculos aproximam a câmera em vez de girá-la ou incliná-la (`PushByProbes`), e a inclinação volta à última escolhida pelo
+jogador. L1/R1 continuam trazendo a câmera para trás do personagem. Com veículo (Humiliskate, Rollerbrawl, hoverboard) e na
+morte, a câmera é a original. Testado com `TWIN_LOG_CAMERA=1` correndo em círculos: original, a rotação passeou entre -24° e 36°
+sozinha; livre, ficou parada em -44,8°.
 
 ## O que já funciona (código pronto, testes escritos)
 

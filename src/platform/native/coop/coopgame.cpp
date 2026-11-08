@@ -1738,6 +1738,45 @@ void TestStick(unsigned char* x, unsigned char* y)
     *y = static_cast<unsigned char>(128.0 + 127.0 * std::sin(angle));
 }
 
+namespace
+{
+// The free camera's setting: $TWIN_CAMERA or coop.ini's camera ("free", the default, or "original"), then F7
+bool& FreeCameraSetting()
+{
+    static bool made = false;
+    static bool on = true;
+    if (!made)
+    {
+        made = true;
+        auto ini = ReadIni();
+        on = Setting(ini, "camera", "TWIN_CAMERA", "free") != "original";
+    }
+
+    return on;
+}
+}
+
+bool FreeCamera()
+{
+    return FreeCameraSetting();
+}
+
+void CameraKeys()
+{
+    static bool down = false;
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    bool now = keys != nullptr && keys[SDL_SCANCODE_F7];
+    if (now && !down)
+    {
+        bool& on = FreeCameraSetting();
+        on = !on;
+        Native::Log("camera: %s", on ? "free (F7)" : "the game's own (F7)");
+        g_Session.Notify(on ? "Camera livre (F7)" : "Camera original (F7)", 2.5);
+    }
+
+    down = now;
+}
+
 bool Active()
 {
     StartOnce();

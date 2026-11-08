@@ -13,8 +13,25 @@
 #include "game/vehicles.h"
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "fixes.h"
+#include "native.h"
 #include "ui/nativeui.h"
+
+#include <cstdlib>
+
+namespace
+{
+// The free camera this frame (coop/coopgame.cpp's FreeCamera): asked for, and the character on foot and alive (the vehicles' views
+// and a death's are the game's own)
+bool g_FreeOnFoot = false;
+}
+
+// (followcamera.cpp's blenders ask too)
+bool FreeCameraOnFoot()
+{
+    return g_FreeOnFoot;
+}
 #endif
 
 EABI_EXPORT(FUN_00142af8, &FollowCameraRig::RollerbrawlYaw);
@@ -260,6 +277,19 @@ void FollowCameraRig::Frame(TimeClock* clock, CharacterAgent* character)
     {
         positioner.bits.skipsViewCheck = 1;
     }
+
+#ifdef TWIN_NATIVE
+    g_FreeOnFoot = Coop::FreeCamera() && vehicle == nullptr && character->state.dead == 0;
+    // $TWIN_LOG_CAMERA (tests): the camera's yaw and pitch every second
+    static const bool logCamera = std::getenv("TWIN_LOG_CAMERA") != nullptr;
+    static u32 lastLog = 0;
+    if (logCamera && clock->time - lastLog >= static_cast<u32>(g_ClockUnitsPerSecond))
+    {
+        lastLog = clock->time;
+        Native::Log("camera: yaw %.1f, pitch %.1f degrees (%s)", static_cast<f32>(positioner.yaw.current) * AngleToRadians * 57.29578f,
+                    static_cast<f32>(positioner.pitch.current) * AngleToRadians * 57.29578f, g_FreeOnFoot ? "free" : "the game's");
+    }
+#endif
 
     // The target follows the vehicle's exit matrix (read as a place's matrix), the character on foot
     ownTarget.fixedPlace = vehicle != nullptr ? reinterpret_cast<ObjectPlace*>(&vehicle->exitMatrix) : nullptr;
@@ -550,6 +580,14 @@ void FollowCameraRig::StepWalkYaw(CharacterAgent* character)
         return;
     }
 
+#ifdef TWIN_NATIVE
+    // The free camera: no turning with the character's run (only the shoulder buttons' swing, above)
+    if (g_FreeOnFoot)
+    {
+        return;
+    }
+#endif
+
     Vector4 velocity;
     character->MovingVelocity(&velocity);
     f32 speed = __builtin_sqrtf(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
@@ -604,6 +642,18 @@ void FollowCameraRig::StepWalkYaw(CharacterAgent* character)
 void FollowCameraRig::UpdateHolds()
 {
     FollowCameraPositioner& positioner = ownPositioner;
+#ifdef TWIN_NATIVE
+    // The free camera: never swung back behind the character on its own (the holds are what bring it back once they've waited);
+    // its pitch held, to the pitch the player chose (followcamera.cpp: what pushed it off a wall comes back)
+    if (g_FreeOnFoot)
+    {
+        positioner.yaw.bits.holds = 0;
+        positioner.pitch.bits.holds = bits.stickTurning == 0;
+        positioner.bits.stickTurned = 1;
+        bits.stickTurned = 1;
+        return;
+    }
+#endif
     if (bits.stickTurning != 0)
     {
         positioner.yaw.bits.holds = 0;
@@ -813,6 +863,13 @@ void TakeChosenCamera(FollowCamera* follow)
 
 void OfferCamera(FollowCamera* follow, CameraNode* trigger, u32 priority, CharacterAgent* character)
 {
+#ifdef TWIN_NATIVE
+    // The free camera: the levels' camera triggers not taken on foot (with a vehicle, they are)
+    if (Coop::FreeCamera() && (character == nullptr || character->vehicle == nullptr))
+    {
+        return;
+    }
+#endif
     if (follow->pending != nullptr && follow->priority >= priority &&
         (priority != follow->priority || follow->current != trigger))
     {
