@@ -18,6 +18,14 @@ void GameFrame();
 // Whether online co-op is on (asked for, whether or not the partner is there)
 bool Active();
 
+// The second player on this PC (coop/secondplayer.cpp; coop.ini's players=2 or $TWIN_PLAYERS=2): a second character of its own,
+// played with the second gamepad (the pads' port 1). Once a frame from the pads' read; and while it's made (instancefactory.cpp's
+// GameFactoryStandIn: a character of its own, not the progress's)
+void SecondPlayerFrame();
+extern bool g_SpawningSecondPlayer;
+// The second player's character (none while it isn't in play)
+InstanceContext* SecondPlayer();
+
 // The free camera (followrig.cpp; F7 turns it on and off, coop.ini's camera=original starts it off): on foot, the camera turns only
 // when the player turns it (the right stick, the mouse; the shoulder buttons still swing it behind the character), never on its
 // own nor to the levels' camera triggers. With a vehicle (the Humiliskate, the Rollerbrawl, the hoverboard) the game's own

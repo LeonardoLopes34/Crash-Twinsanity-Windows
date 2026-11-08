@@ -26,6 +26,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 extern "C"
 {
     // A place's matrix made again from its position and rotation once they changed
@@ -694,6 +698,18 @@ InstanceContext* GameFactoryStandIn(InstanceFactory* factory, ChunkEntry* chunk,
             break;
         }
     }
+#ifdef TWIN_NATIVE
+    else if (Coop::g_SpawningSecondPlayer)
+    {
+        // The second player (coop/secondplayer.cpp): a character of its own, not the progress's (which stays the first player's),
+        // given places, a controls' node and a follow node as the progress's character is
+        auto* objectNode = static_cast<ObjectNodeBase*>(GetGameNode(&context->nodes, NodeObject));
+        objectNode->information.flags.stays = 0;
+        MakeInstancePlaces(context, chunkData);
+        RegisterNode(context, AttachNode, ConstructControlsNode(MemoryAllocate(sizeof(ControlsNode))));
+        RegisterNode(context, AttachNode, ConstructFollowNode(static_cast<FollowNode*>(MemoryAllocate(sizeof(FollowNode))), chunk));
+    }
+#endif
     else
     {
         auto* objectNode = static_cast<ObjectNodeBase*>(GetGameNode(&context->nodes, NodeObject));

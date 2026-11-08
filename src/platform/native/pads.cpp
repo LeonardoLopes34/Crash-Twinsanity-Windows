@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -51,6 +52,9 @@ bool g_Initialised = false;
 bool g_Open = false;
 bool g_PressureMode = false;
 SDL_Gamepad* g_Gamepad = nullptr;
+// The second player's (coop/secondplayer.cpp): port 1, the second gamepad plugged in (a friend's through Parsec)
+bool g_SecondOpen = false;
+SDL_Gamepad* g_SecondGamepad = nullptr;
 
 // What each button's pressure byte is (the PS2's ReportByte order)
 struct PressureOf
@@ -104,6 +108,40 @@ void FindGamepad()
 
     SDL_free(ids);
 }
+
+// The second gamepad: the first one plugged in that isn't the first player's, kept until it's unplugged
+void FindSecondGamepad()
+{
+    if (g_SecondGamepad != nullptr && SDL_GamepadConnected(g_SecondGamepad) && g_SecondGamepad != g_Gamepad)
+    {
+        return;
+    }
+
+    if (g_SecondGamepad != nullptr && g_SecondGamepad != g_Gamepad)
+    {
+        SDL_CloseGamepad(g_SecondGamepad);
+    }
+
+    g_SecondGamepad = nullptr;
+    SDL_JoystickID firstId = g_Gamepad != nullptr ? SDL_GetGamepadID(g_Gamepad) : 0;
+    int count = 0;
+    SDL_JoystickID* ids = SDL_GetGamepads(&count);
+    for (int index = 0; ids != nullptr && index < count; index++)
+    {
+        if (ids[index] != firstId)
+        {
+            g_SecondGamepad = SDL_OpenGamepad(ids[index]);
+            if (g_SecondGamepad != nullptr)
+            {
+                Native::Log("pads: the second player's: %s", SDL_GetGamepadName(g_SecondGamepad));
+            }
+
+            break;
+        }
+    }
+
+    SDL_free(ids);
+}
 }
 
 s32 Platform::Pads::Initialise()
@@ -115,6 +153,13 @@ s32 Platform::Pads::Initialise()
 s32 Platform::Pads::Open(s32 port, s32 slot, void*)
 {
     StartSdl();
+    if (port == 1 && slot == 0)
+    {
+        // The second player's port (always there: what plays it is looked for each frame)
+        g_SecondOpen = true;
+        return 1;
+    }
+
     if (port != 0 || slot != 0)
     {
         return 0;
@@ -131,12 +176,21 @@ s32 Platform::Pads::Close(s32 port, s32 slot)
         g_Open = false;
         g_PressureMode = false;
     }
+    else if (port == 1 && slot == 0)
+    {
+        g_SecondOpen = false;
+    }
 
     return 1;
 }
 
 Platform::Pads::State Platform::Pads::GetState(s32 port, s32 slot)
 {
+    if (port == 1 && slot == 0)
+    {
+        return g_SecondOpen ? StateStable : StateDisconnected;
+    }
+
     return port == 0 && slot == 0 && g_Open ? StateStable : StateDisconnected;
 }
 
@@ -246,12 +300,84 @@ bool WatchPadEvents(void*, SDL_Event* event)
 }
 }
 
+namespace
+{
+// A report as the PS2's pad gives it, from what the bindings made of the keys and a gamepad
+s32 WriteReport(const NativeUi::BoundPad& bound, u8 leftX, u8 leftY, u8* data)
+{
+    u32 buttons = bound.buttons;
+    u8 pressure[PressureReportBytes] = {};
+    pressure[PressureL2] = bound.l2Pressure;
+    pressure[PressureR2] = bound.r2Pressure;
+    for (const PressureOf& of : Pressures)
+    {
+        if ((buttons & of.button) != 0 && pressure[of.byte] == 0)
+        {
+            pressure[of.byte] = Pressed;
+        }
+    }
+
+    std::memset(data, 0, PressureReportBytes);
+    data[ReportMode] = g_PressureMode ? ModePressure : ModeAnalog;
+    data[ReportButtonsHigh] = static_cast<u8>(~buttons >> 8);
+    data[ReportButtonsLow] = static_cast<u8>(~buttons);
+    data[StickRightX] = bound.rightX;
+    data[StickRightY] = bound.rightY;
+    data[StickLeftX] = leftX;
+    data[StickLeftY] = leftY;
+    if (g_PressureMode)
+    {
+        for (u32 byte = PressureRight; byte <= PressureR2; byte++)
+        {
+            data[byte] = pressure[byte];
+        }
+    }
+
+    return g_PressureMode ? PressureReportBytes : AnalogReportBytes;
+}
+
+// The second player's report: the second gamepad's buttons and sticks by the same bindings (no keyboard: the first player has it).
+// $TWIN_P2_TEST_RUN=seconds (tests): that long after the game starts, its left stick turned round on its own
+s32 ReadSecond(u8* data)
+{
+    if (!g_SecondOpen)
+    {
+        return 0;
+    }
+
+    FindSecondGamepad();
+    static bool noKeys[SDL_SCANCODE_COUNT];
+    NativeUi::BoundPad bound;
+    NativeUi::ReadBindings(noKeys, g_SecondGamepad, &bound);
+    u8 leftX = bound.leftX;
+    u8 leftY = bound.leftY;
+    static const char* testRun = std::getenv("TWIN_P2_TEST_RUN");
+    if (testRun != nullptr)
+    {
+        double seconds = static_cast<double>(SDL_GetTicks()) / 1000.0 - std::atof(testRun);
+        if (seconds > 0 && std::fmod(seconds, 4.0) >= 1.0)
+        {
+            double angle = seconds * (2.0 * 3.14159265 / 5.0);
+            leftX = static_cast<u8>(128.0 + 127.0 * std::cos(angle));
+            leftY = static_cast<u8>(128.0 + 127.0 * std::sin(angle));
+        }
+    }
+
+    return WriteReport(bound, leftX, leftY, data);
+}
+}
+
 s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
 {
     if (!g_Watching)
     {
         g_Watching = true;
         SDL_AddEventWatch(WatchPadEvents, nullptr);
+    }
+
+    if (port == 1 && slot == 0)
+    {
+        return ReadSecond(data);
     }
 
     if (port != 0 || slot != 0 || !g_Open)
@@ -276,6 +402,8 @@ s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
     Coop::GameFrame();
     // The free camera's key (F7), with or without co-op
     Coop::CameraKeys();
+    // The second player on this PC (coop/secondplayer.cpp)
+    Coop::SecondPlayerFrame();
     // The level sweep's frame here too: GameController::Update (its other caller) doesn't run while some cutscenes play, the pads'
     // reads do (their skip polls them)
     NativeUi::SweepFrame(true);
