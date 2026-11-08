@@ -48,6 +48,7 @@ namespace Coop
 namespace
 {
 Session g_Session;
+Settings g_Settings;
 bool g_Started = false;
 bool g_ShowingText = false;
 std::string g_ShownText;
@@ -127,13 +128,43 @@ void StartOnce()
     settings.name = Setting(ini, "name", "TWIN_COOP_NAME", settings.role == Role::Host ? "Jogador 1" : "Jogador 2");
     settings.skin = static_cast<uint8_t>(std::atoi(Setting(ini, "skin", "TWIN_COOP_SKIN", settings.role == Role::Host ? "0" : "1").c_str()));
     settings.leashDistance = static_cast<float>(std::atof(Setting(ini, "leash", "TWIN_COOP_LEASH", "0").c_str()));
+    g_Settings = settings;
     if (!g_Session.Start(settings))
     {
-        Native::Log("coop: not started: %s", g_Session.Error().c_str());
+        Native::Log("coop: not started: %s (tried again every few seconds)", g_Session.Error().c_str());
         return;
     }
 
     Native::Log("coop: started as the %s", settings.role == Role::Host ? "host" : "client");
+}
+
+// The session that couldn't start (the port taken: the connection test or another game still open), tried again every 3 s, and
+// said on the screen meanwhile
+std::string RetryStart(double now)
+{
+    if (g_Session.GetLink() != Session::Link::Failed)
+    {
+        return "";
+    }
+
+    static double lastTry = 0;
+    if (now - lastTry >= 3.0)
+    {
+        lastTry = now;
+        if (g_Session.Start(g_Settings))
+        {
+            Native::Log("coop: started as the %s (on a retry)", g_Settings.role == Role::Host ? "host" : "client");
+            return "";
+        }
+    }
+
+    if (g_Settings.role == Role::Host)
+    {
+        return "Co-op: porta " + std::to_string(g_Settings.port) +
+               " ocupada - feche o TESTAR CONEXAO ou o outro jogo aberto (tentando de novo...)";
+    }
+
+    return "Co-op: " + g_Session.Error();
 }
 
 InstanceContext* PlayerInstance()
@@ -1488,8 +1519,13 @@ void GameFrame()
     BackpackFrame(now);
     UpdatePuppet(now, local);
 
-    // The HUD: the cutscene's wait first, else the session's latest notice (connected, left...)
-    std::string line = GateLine(now);
+    // The HUD: a session that couldn't start first, then the cutscene's wait, else the session's latest notice (connected, left...)
+    std::string line = RetryStart(now);
+    if (line.empty())
+    {
+        line = GateLine(now);
+    }
+
     if (line.empty() && !g_Session.Notices().empty())
     {
         line = g_Session.Notices().back().text;
