@@ -21,6 +21,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The commands that warp and turn an agent's instance, strafe and move it toward a designator, push it along what it
 // perceives, set its keys and the trajectory controller's wobble, link it to the nearest AI position, set its head tracking's
 // target, change its linked objects' counters and pick the one near the player, give it shadow shapes, spawn instances for it
@@ -788,6 +792,10 @@ void SetHeadTrackingTargetCommand::Execute(TimeClock*, BehaviourRunner* runner, 
     else if (target.player)
     {
         instance = PlayerInstance();
+#ifdef TWIN_NATIVE
+        // Two players: the nearer one (coop/secondplayer.cpp)
+        instance = instance != nullptr ? Coop::PlayerFor(node->owner, instance) : nullptr;
+#endif
     }
     else if (target.agentRef2)
     {

@@ -329,12 +329,14 @@ struct Orbit
     u64 last = 0;
 };
 Orbit g_Orbits[2];
-constexpr float OrbitDistance = 5.2f;
-constexpr float TargetHeight = 1.2f;
+// (Farther and higher than the first try: the players felt they were under the character)
+constexpr float OrbitDistance = 7.5f;
+constexpr float TargetHeight = 1.7f;
+constexpr float StartPitch = 0.42f;
 constexpr float TurnSpeed = 3.4f;
 constexpr float PitchSpeed = 2.2f;
-constexpr float LowestPitch = -0.35f;
-constexpr float HighestPitch = 1.1f;
+constexpr float LowestPitch = -0.05f;
+constexpr float HighestPitch = 1.15f;
 // The surfaces that stop a camera (layout.h's SurfaceFlags::BlocksCamera)
 constexpr u32 BlocksCamera = 0x20;
 
@@ -398,24 +400,34 @@ void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera
         Vector4 heading = Unit({forward.x, 0.0f, forward.z, 0.0f});
         orbit.headingX = heading.x;
         orbit.headingZ = heading.z;
-        orbit.pitch = std::asin(std::fmax(-1.0f, std::fmin(1.0f, -forward.y)));
-        orbit.pitch = std::fmax(LowestPitch, std::fmin(HighestPitch, orbit.pitch));
+        // (The heading the game's camera had; the height ours)
+        orbit.pitch = StartPitch;
         orbit.camera = camera;
     }
 
     // The stick: right turns the view right (the heading toward the camera's right), up looks up
     float turn = StickOf(pad, false);
     float look = StickOf(pad, true);
-    // The first player's mouse: its own push, not cut at the stick's end (a quick flick turns quickly)
+    // The first player's mouse: its own push, not cut at the stick's end (a quick flick turns quickly). The game takes the mouse
+    // the other way on both axes to stand for its stick (mouselook.cpp: the PS2's stick moves the camera round Crash, the other
+    // way to a look), this camera's stick turns the look itself: taken back here (it came out crossed: left looked right, up down).
+    // While the mouse moves, the stick's report (the mouse in it too, taken the game's way) isn't read
     if (player == 0)
     {
         float mouseX = 0.0f;
         float mouseY = 0.0f;
         NativeUi::LastMouseLook(&mouseX, &mouseY);
+        static u64 mouseAt = 0;
         if (mouseX != 0.0f || mouseY != 0.0f)
         {
-            turn = mouseX;
-            look = mouseY;
+            mouseAt = now;
+            turn = -mouseX;
+            look = -mouseY;
+        }
+        else if (now - mouseAt < 150000000ull)
+        {
+            turn = 0.0f;
+            look = 0.0f;
         }
     }
     Vector4 heading = {orbit.headingX, 0.0f, orbit.headingZ, 0.0f};
@@ -482,9 +494,16 @@ void OrbitCameras()
 }
 }
 
+// The third person camera (on; $TWIN_ORBIT_CAMERA=0 the game's own, as F7 does)
+bool OrbitCameraWanted()
+{
+    static const char* setting = std::getenv("TWIN_ORBIT_CAMERA");
+    return setting == nullptr || std::atoi(setting) != 0;
+}
+
 void BeforeDraw()
 {
-    if (Wanted())
+    if (Wanted() && OrbitCameraWanted())
     {
         OrbitCameras();
     }
@@ -720,8 +739,9 @@ bool BackpackPressed(int player)
 
 // The leash: the world is loaded around the first player only, so the two can't go far apart. Past WarnAt the windows' edges turn
 // red (LeashWarning: stronger nearer the limit), at LimitAt the second player is taken into the first's backpack
-constexpr float WarnAt = 20.0f;
-constexpr float LimitAt = 30.0f;
+// (20 and 30 were too short: the players were pulled together all the time)
+constexpr float WarnAt = 55.0f;
+constexpr float LimitAt = 75.0f;
 float g_Leash = 0.0f;
 
 void LeashFrame()
@@ -846,14 +866,14 @@ InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
 
 InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
 {
-    if (g_SecondModel == nullptr || asking == nullptr || player == nullptr || asking == player ||
-        GetGameNode(&asking->nodes, NodeCharacter) == nullptr)
+    // (Anything asking, not only Cortex and Nina: a worm the second player jumped on launched the first, again and again)
+    if (g_SecondModel == nullptr || asking == nullptr || player == nullptr || asking == player)
     {
         return player;
     }
 
     InstanceContext* second = SecondPlayer();
-    return asking == second ? player : NearerPlayer(asking, player);
+    return asking == second ? second : NearerPlayer(asking, player);
 }
 
 bool TintsGreen(const ModelNode* node)

@@ -21,6 +21,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The commands that set an agent's focus (an instance or a position), its agent references and its stored position from
 // designators, keys, messages and linked objects, set and change counters, unlink and run behaviours on linked objects, restart
 // the behaviour, turn and warp; and the object node's slot animation
@@ -812,6 +816,10 @@ void SetFocusPositionBesidePlayerCommand::Execute(TimeClock*, BehaviourRunner* r
 {
     auto* player = g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
     ObjectNode* node = NodeOf(runner);
+#ifdef TWIN_NATIVE
+    // Two players: the nearer one (coop/secondplayer.cpp)
+    player = player != nullptr ? Coop::PlayerFor(node->owner, player) : nullptr;
+#endif
     Vector4 own = PositionOf(node->owner);
     // A missing player's place is read at address 8
     Vector4 from = PositionOf(player);

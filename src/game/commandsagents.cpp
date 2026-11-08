@@ -30,6 +30,10 @@
 #include <cstdint>
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
+#ifdef TWIN_NATIVE
 #include "fixes.h"
 #endif
 
@@ -602,6 +606,10 @@ void SetFocusPositionToPlayerCommand::Execute(TimeClock*, BehaviourRunner* runne
     }
 
     ObjectNode* node = NodeOf(runner);
+#ifdef TWIN_NATIVE
+    // Two players: the nearer one (coop/secondplayer.cpp)
+    player = Coop::PlayerFor(node->owner, player);
+#endif
     if (!TakesPackets(node))
     {
         return;

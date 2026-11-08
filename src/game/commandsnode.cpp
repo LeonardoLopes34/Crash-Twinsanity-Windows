@@ -968,6 +968,10 @@ void SetAgentRef1ToPlayerCommand::Execute(TimeClock*, BehaviourRunner* runner, B
     }
 
     ObjectNode* node = NodeOf(runner);
+#ifdef TWIN_NATIVE
+    // Two players: the nearer one (coop/secondplayer.cpp)
+    player = Coop::PlayerFor(node->owner, player);
+#endif
     if (TakesPackets(node))
     {
         node->agentRef1 = player;
