@@ -17,6 +17,7 @@
 #include "gs/gs.h"
 
 #include "game/renderer.h"
+#include "coop/coop.h"
 #include "fixes.h"
 #include "native.h"
 
@@ -370,14 +371,60 @@ void WriteWindowShot(s32 width, s32 height)
     Native::Log("window shot: %s (%dx%d)%s", path.c_str(), width, height, written ? "" : ", not written");
 }
 
+// The second player's window (coop/secondplayer.cpp's two views): made the first time a frame of the second player's view is shown,
+// drawn with the window's context. Which window the picture goes to now (none: the window)
+SDL_Window* g_SecondWindow = nullptr;
+SDL_Window* g_PresentTarget = nullptr;
+
+// The window a view's frames go to (the second player's made when it's first wanted)
+SDL_Window* WindowForView(int view)
+{
+    Presenter& p = g_Presenter;
+    if (view != 1 || p.window == nullptr)
+    {
+        return p.window;
+    }
+
+    if (g_SecondWindow == nullptr)
+    {
+        s32 width = 0;
+        s32 height = 0;
+        SDL_GetWindowSize(p.window, &width, &height);
+        g_SecondWindow = SDL_CreateWindow("Crash Twinsanity - Jogador 2", width > 0 ? width : 1280, height > 0 ? height : 720,
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        if (g_SecondWindow == nullptr)
+        {
+            Native::Log("display: the second player's window couldn't be made: %s", SDL_GetError());
+            return p.window;
+        }
+
+        // Two windows swapping: neither waits for the screen's refresh (the frame pacing keeps the time)
+        SDL_GL_MakeCurrent(g_SecondWindow, p.context);
+        SDL_GL_SetSwapInterval(0);
+        SDL_GL_MakeCurrent(p.window, p.context);
+        SDL_GL_SetSwapInterval(0);
+        p.vsyncSet = true;
+        Native::Log("display: the second player's window made (%dx%d)", width, height);
+    }
+
+    return g_SecondWindow;
+}
+
 // The picture drawn over the window: a texture's rectangle (0-1, top row first) of a picture of these pixels, at the TV's shape
 void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureWidth, u32 pictureHeight, u32 texelsPerPixel)
 {
     Presenter& p = g_Presenter;
     Gl& gl = p.gl;
+    // The second player's window drawn with the same context, made current on it for this picture
+    SDL_Window* target = g_PresentTarget != nullptr ? g_PresentTarget : p.window;
+    if (target != p.window)
+    {
+        SDL_GL_MakeCurrent(target, p.context);
+    }
+
     s32 width = 0;
     s32 height = 0;
-    SDL_GetWindowSizeInPixels(p.window, &width, &height);
+    SDL_GetWindowSizeInPixels(target, &width, &height);
     // The hardware renderer shares the context: its state isn't the presenter's
     gl.BindFramebuffer(0x8D40, 0);
     gl.Disable(0x0BE2);
@@ -482,13 +529,17 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
     {
         s32 points = 0;
         s32 pointsHigh = 0;
-        SDL_GetWindowSize(p.window, &points, &pointsHigh);
+        SDL_GetWindowSize(target, &points, &pointsHigh);
         gl.Viewport(0, 0, width, height);
         g_Overlay(width, height, points > 0 ? static_cast<f32>(width) / static_cast<f32>(points) : 1.0f);
     }
 
     WriteWindowShot(width, height);
-    SDL_GL_SwapWindow(p.window);
+    SDL_GL_SwapWindow(target);
+    if (target != p.window)
+    {
+        SDL_GL_MakeCurrent(p.window, p.context);
+    }
 }
 
 void Present(const NativeGraphics::Picture& picture)
@@ -1259,14 +1310,19 @@ void ShowFrame()
     }
 
     CaptureShown();
-    // This frame's picture made on the render thread; the one before it, made by now or waited for, shown
+    // This frame's picture made on the render thread; the one before it, made by now or waited for, shown (in the window of the
+    // player whose view it is: coop/secondplayer.cpp)
     u64 frame = RenderQueueFrame([](u64 made) { MakeShown(made); });
+    static int views[3] = {0, 0, 0};
+    views[frame % 3] = Coop::TwoViewsFrame();
     const Shown* shown = nullptr;
     if (frame > 1)
     {
         RenderWaitFrame(frame - 1);
         Shown& before = g_Shown[(frame - 1) % 3];
+        g_PresentTarget = WindowForView(views[(frame - 1) % 3]);
         PresentShown(before);
+        g_PresentTarget = nullptr;
         shown = &before;
     }
 
@@ -1277,6 +1333,12 @@ namespace
 {
 void ShowFrameHere()
 {
+    // (The window of the player whose view this frame is: coop/secondplayer.cpp; set back at the end)
+    g_PresentTarget = WindowForView(Coop::TwoViewsFrame());
+    struct Untarget
+    {
+        ~Untarget() { g_PresentTarget = nullptr; }
+    } untarget;
     CaptureShown();
     // This picture's number (TWIN_DUMP_FRAMES's)
     static u32 shown = 0;

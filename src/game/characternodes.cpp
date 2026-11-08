@@ -14,6 +14,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // A playable character's own nodes: the controls (kind 0xB, the pad read into the character's controls, or the instance's motion
 // driving them while it's held) and the follow camera (kind 0x16, the camera's instance it makes in the character's chunk)
 
@@ -253,7 +257,13 @@ u32 FollowNode::Update(TimeClock* clock)
 {
     GameProgress& progress = g_AgentNodesGameController->progress;
     InstanceContext* player = progress.Instance(progress.play.character);
-    if (player != owner && player != nullptr)
+#ifdef TWIN_NATIVE
+    // The second player on this PC follows with its own camera too (coop/secondplayer.cpp)
+    bool second = owner == Coop::SecondPlayer();
+#else
+    bool second = false;
+#endif
+    if (player != owner && player != nullptr && !second)
     {
         StopFollowing();
         return GameNode::Update(clock);

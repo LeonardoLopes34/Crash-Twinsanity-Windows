@@ -7,6 +7,7 @@
 #include "coop.h"
 
 #include "native.h"
+#include "ui/nativeui.h"
 
 #include "game/agents.h"
 #include "game/chunkdata.h"
@@ -95,6 +96,14 @@ CharacterAgent* AgentOf(InstanceContext* instance)
     return node != nullptr ? node->character : nullptr;
 }
 
+// A playable character's follow camera's instance (none without one)
+InstanceContext* CameraOf(InstanceContext* character)
+{
+    auto* follow = character != nullptr ? static_cast<FollowNode*>(GetGameNode(&character->nodes, NodeFollow)) : nullptr;
+    return follow != nullptr && follow->cameraInstance != nullptr ? static_cast<InstanceContext*>(follow->cameraInstance->object)
+                                                                  : nullptr;
+}
+
 GamePad* SecondPad()
 {
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
@@ -149,10 +158,18 @@ void Make()
         controls->pad = pad != nullptr && pad->info != nullptr ? pad : nullptr;
     }
 
+    // Its own camera, as the game shows the first player's (ShowCamera's follow camera): its rig on its lens, kept in its chunk
     auto* follow = static_cast<FollowNode*>(GetGameNode(&made->nodes, NodeFollow));
-    if (follow != nullptr)
+    InstanceContext* camera = CameraOf(made);
+    if (follow != nullptr && camera != nullptr)
     {
-        UnregisterNode(follow->owner, 0, follow);
+        // As GameController::SwitchCharacter does for the character played: the rig's target the character, the follow node
+        // stepped every frame, its camera awake
+        AssignReference(&follow->camera.rig.ownTarget.followed, made);
+        RegisterNode(follow->owner, 0, follow);
+        CallVirtual<u32>(camera, camera->vtable, ReferencedObject::WakeSlot);
+        ShowFollowCamera(&follow->camera, camera, made, 1);
+        camera->flags.movesBetweenChunks = 0;
     }
 
     Native::Log("second player: made beside the first at (%.1f, %.1f, %.1f) in %s, %s", position.x, position.y, position.z,
@@ -165,6 +182,78 @@ void Make()
 InstanceContext* SecondPlayer()
 {
     return Valid() ? g_Second.instance : nullptr;
+}
+
+bool SecondPlayerWanted()
+{
+    return Wanted();
+}
+
+// The two views: each frame drawn from one player's camera, the next from the other's (at 120 frames a second, each window shows 60:
+// the game's own steps stay 60 a second, every other frame draws the same moment from the other camera)
+namespace
+{
+int g_Drawing = 0;
+}
+
+int TwoViewsFrame()
+{
+    GameController* controller = G_GameController;
+    InstanceContext* second = SecondPlayer();
+    InstanceContext* firstCamera = CameraOf(FirstPlayer());
+    InstanceContext* secondCamera = CameraOf(second);
+    // (The game shows its own rig most of the time in play, or the played character's follow camera: either is the first view)
+    bool on = controller != nullptr && second != nullptr && firstCamera != nullptr && secondCamera != nullptr &&
+              controller->State() == GameController::StatePlaying &&
+              (controller->states.camera == GameController::CameraFollow ||
+               controller->states.camera == GameController::CameraGameRig);
+    // The camera the first player sees, taken on the first player's frames (given back after each of the second's)
+    static InstanceContext* firstView = nullptr;
+    if (controller != nullptr && g_Drawing == 0)
+    {
+        firstView = controller->view.cameraObject != nullptr ? static_cast<InstanceContext*>(controller->view.cameraObject->object)
+                                                             : nullptr;
+    }
+
+    if (firstView != nullptr && !InstanceLive(firstView))
+    {
+        firstView = nullptr;
+    }
+
+    firstCamera = firstView != nullptr ? firstView : firstCamera;
+    // Why there's one view while there's a second player (once every 3 s)
+    static u32 calls = 0;
+    calls++;
+    if (!on && second != nullptr && calls % 360 == 1)
+    {
+        Native::Log("second player: one view (first camera %s, second camera %s, state %u, camera kind %u)",
+                    firstCamera != nullptr ? "there" : "none", secondCamera != nullptr ? "there" : "none",
+                    controller != nullptr ? controller->State() : 99u,
+                    controller != nullptr ? static_cast<unsigned>(controller->states.camera) : 99u);
+    }
+
+    int drawn = g_Drawing;
+    int next = on ? 1 - g_Drawing : 0;
+    if (next != g_Drawing && controller != nullptr && (next == 1 ? secondCamera : firstCamera) != nullptr)
+    {
+        AssignReference(&controller->view.cameraObject, next == 1 ? secondCamera : firstCamera);
+    }
+
+    // 120 frames a second while there are two views (each window then 60)
+    static bool rateSet = false;
+    if (on && !rateSet)
+    {
+        rateSet = true;
+        constexpr s32 Rate120 = 2;
+        if (NativeUi::GetOption(NativeUi::OptionRefresh60) != Rate120)
+        {
+            NativeUi::SetOption(NativeUi::OptionRefresh60, Rate120);
+            Native::Log("second player: two views, the frame rate set to 120 (each window 60)");
+        }
+    }
+
+    g_Drawing = next;
+    return drawn;
 }
 
 void SecondPlayerFrame()

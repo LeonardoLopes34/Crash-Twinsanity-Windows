@@ -97,6 +97,14 @@ void FindGamepad()
 
     int count = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&count);
+    // Two players on this PC with a single gamepad: it's the second player's (a friend's through Parsec), the first plays on the
+    // keyboard; with two or more, the first is the first player's
+    if (ids != nullptr && count == 1 && Coop::SecondPlayerWanted())
+    {
+        SDL_free(ids);
+        return;
+    }
+
     if (ids != nullptr && count > 0)
     {
         g_Gamepad = SDL_OpenGamepad(ids[0]);

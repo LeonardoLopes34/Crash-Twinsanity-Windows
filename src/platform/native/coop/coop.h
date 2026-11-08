@@ -23,8 +23,13 @@ bool Active();
 // GameFactoryStandIn: a character of its own, not the progress's)
 void SecondPlayerFrame();
 extern bool g_SpawningSecondPlayer;
+// Whether the second player is asked for (the pads give a lone gamepad to the second player then)
+bool SecondPlayerWanted();
 // The second player's character (none while it isn't in play)
 InstanceContext* SecondPlayer();
+// Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
+// first's, 1 the second's: the second window), the next frame's camera chosen
+int TwoViewsFrame();
 
 // The free camera (followrig.cpp; F7 turns it on and off, coop.ini's camera=original starts it off): on foot, the camera turns only
 // when the player turns it (the right stick, the mouse; the shoulder buttons still swing it behind the character), never on its
