@@ -398,6 +398,45 @@ SDL_Window* WindowForView(int view)
             return p.window;
         }
 
+        // With a second screen (a real one, or a virtual one Parsec shares with the friend): the second player's window full screen
+        // there. $TWIN_P2_DISPLAY picks the screen (1 the first), else the last that isn't the first window's
+        int count = 0;
+        SDL_DisplayID* displays = SDL_GetDisplays(&count);
+        SDL_DisplayID mainDisplay = SDL_GetDisplayForWindow(p.window);
+        SDL_DisplayID chosen = 0;
+        const char* asked = std::getenv("TWIN_P2_DISPLAY");
+        if (displays != nullptr && asked != nullptr && std::atoi(asked) >= 1 && std::atoi(asked) <= count)
+        {
+            chosen = displays[std::atoi(asked) - 1];
+        }
+        else
+        {
+            for (int index = count - 1; displays != nullptr && index >= 0 && chosen == 0; index--)
+            {
+                chosen = displays[index] != mainDisplay ? displays[index] : 0;
+            }
+        }
+
+        if (chosen != 0)
+        {
+            SDL_Rect bounds;
+            if (SDL_GetDisplayBounds(chosen, &bounds))
+            {
+                SDL_SetWindowPosition(g_SecondWindow, bounds.x, bounds.y);
+                SDL_SetWindowSize(g_SecondWindow, bounds.w, bounds.h);
+                SDL_SetWindowFullscreen(g_SecondWindow, true);
+                Native::Log("display: the second player's window full screen on screen %u (%s, %dx%d)",
+                            static_cast<unsigned>(chosen), SDL_GetDisplayName(chosen), bounds.w, bounds.h);
+            }
+        }
+        else
+        {
+            Native::Log("display: one screen only: the second player's window beside the first (a second screen, real or virtual, "
+                        "takes it full screen)");
+        }
+
+        SDL_free(displays);
+
         // Two windows swapping: neither waits for the screen's refresh (the frame pacing keeps the time)
         SDL_GL_MakeCurrent(g_SecondWindow, p.context);
         SDL_GL_SetSwapInterval(0);
