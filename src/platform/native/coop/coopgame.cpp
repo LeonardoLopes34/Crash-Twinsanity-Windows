@@ -1881,8 +1881,25 @@ bool ModelDrawn(ModelNode* node)
     return false;
 }
 
+void ShowBottomLine(const char* text)
+{
+    ShowLine(text != nullptr ? text : "");
+}
+
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level)
 {
+    // Two players on this PC: a body that sets a checkpoint waits for the other player to be there too (secondplayer.cpp)
+    if (body != nullptr && runner != nullptr && runner->agentNode != nullptr && SecondPlayerWanted())
+    {
+        for (const ScriptCommand* command = body->commands; command != nullptr; command = command->next)
+        {
+            if (command->vtable == g_SetPlayerRespawnPositionCommandVTable)
+            {
+                return CheckpointWaitHolds(runner->agentNode->owner);
+            }
+        }
+    }
+
     if (g_Session.GetRole() == Role::Off || body == nullptr)
     {
         return false;

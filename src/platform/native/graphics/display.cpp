@@ -107,6 +107,10 @@ struct Gl
     void (*Uniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
     // The leash's red edges (two players: coop/secondplayer.cpp) blended over the picture
     void (*BlendFunc)(GLenum, GLenum);
+    // The other player's small picture: a window's picture copied into a texture, a frame round it
+    void (*CopyTexImage2D)(GLenum, GLint, GLenum, GLint, GLint, GLsizei, GLsizei, GLint);
+    void (*CopyTexSubImage2D)(GLenum, GLint, GLint, GLint, GLint, GLint, GLsizei, GLsizei);
+    void (*Scissor)(GLint, GLint, GLsizei, GLsizei);
     // The render thread's pictures: their fences
     void (*Flush)();
     GLsync (*FenceSync)(GLenum, GLbitfield);
@@ -249,20 +253,37 @@ uniform float aspect;
 uniform float strength;
 uniform float pulse;
 uniform float edge;
+// The picture's height a world unit takes at the ping's depth, and how flat the ground's ring is seen
+uniform float unit;
+uniform float squash;
 void main()
 {
     vec2 ndc = vec2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0);
     vec2 d = (ndc - spot) * vec2(aspect, 1.0);
-    float r = length(d);
-    float ringRadius = mix(0.050, 0.075, pulse);
-    float ring = 1.0 - smoothstep(0.006, 0.014, abs(r - ringRadius));
-    float core = 1.0 - smoothstep(0.010, 0.016, r);
-    float beam = (1.0 - smoothstep(0.003, 0.006, abs(d.x))) * step(0.0, d.y) * (1.0 - smoothstep(0.05, 0.22, d.y)) * step(0.02, d.y);
-    float shape = max(ring, max(core, beam * (1.0 - edge)));
-    float shadow = (1.0 - smoothstep(0.0, 0.030, abs(r - ringRadius))) * 0.35;
-    vec3 tint = mix(vec3(1.0, 0.78, 0.12), vec3(1.0, 1.0, 0.85), pulse * 0.5);
-    float alpha = clamp(shape + shadow * (1.0 - shape), 0.0, 1.0) * strength;
-    colour = vec4(mix(vec3(0.0), tint, shape), alpha);
+    // In perspective: the ring is on the ground (a world radius, flattened as the camera sees it), the beam a world height, the
+    // diamond on top; all shrink with the distance (a floor to stay visible far off)
+    float scale = max(unit, 0.012);
+    if (edge > 0.5)
+    {
+        scale = 0.03;
+    }
+
+    float ringRadius = 1.3 * scale * mix(0.82, 1.0, pulse);
+    float ringWidth = max(0.12 * scale, 0.004);
+    vec2 onGround = vec2(d.x, d.y / squash);
+    float ring = 1.0 - smoothstep(ringWidth * 0.5, ringWidth * 1.4, abs(length(onGround) - ringRadius));
+    float inner = 1.0 - smoothstep(ringWidth * 0.5, ringWidth * 1.4, abs(length(onGround) - ringRadius * 0.5));
+    float height = 5.0 * scale;
+    float beamX = 1.0 - smoothstep(0.05 * scale, 0.16 * scale, abs(d.x));
+    float beam = beamX * step(0.0, d.y) * (1.0 - smoothstep(height * 0.82, height, d.y));
+    // A diamond over the beam
+    vec2 top = d - vec2(0.0, height + 0.5 * scale);
+    float diamond = 1.0 - smoothstep(0.42 * scale, 0.5 * scale, abs(top.x) * 1.0 + abs(top.y) * 0.8);
+    float shape = max(max(ring, inner * 0.75), max(beam * (1.0 - edge), diamond));
+    float glow = (1.0 - smoothstep(0.0, ringRadius * 1.5, length(onGround))) * 0.18 * (1.0 - edge);
+    vec3 tint = mix(vec3(1.0, 0.72, 0.1), vec3(1.0, 0.98, 0.8), pulse * 0.55);
+    float alpha = clamp(max(shape, glow), 0.0, 1.0) * strength;
+    colour = vec4(tint, alpha);
 }
 )";
 
@@ -613,6 +634,65 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
 
     gl.BindVertexArray(p.vertexArray);
     gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // Two views: each window's picture kept for the other window's corner (when the other player asked for it), and the other's
+    // shown here (when this player did)
+    if (Coop::TwoViews())
+    {
+        static GLuint pipTexture[2] = {0, 0};
+        static s32 pipWidth[2] = {0, 0};
+        static s32 pipHeight[2] = {0, 0};
+        const int mine = target != p.window ? 1 : 0;
+        const int other = 1 - mine;
+        if (Coop::PipWanted(other) && p.viewWidth > 0 && p.viewHeight > 0)
+        {
+            if (pipTexture[mine] == 0)
+            {
+                gl.GenTextures(1, &pipTexture[mine]);
+            }
+
+            gl.ActiveTexture(GL_TEXTURE0);
+            gl.BindTexture(GL_TEXTURE_2D, pipTexture[mine]);
+            if (pipWidth[mine] != p.viewWidth || pipHeight[mine] != p.viewHeight)
+            {
+                gl.CopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, p.viewX, p.viewY, p.viewWidth, p.viewHeight, 0);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(GL_LINEAR));
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(GL_LINEAR));
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, static_cast<GLint>(GL_CLAMP_TO_EDGE));
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, static_cast<GLint>(GL_CLAMP_TO_EDGE));
+                pipWidth[mine] = p.viewWidth;
+                pipHeight[mine] = p.viewHeight;
+            }
+            else
+            {
+                gl.CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.viewX, p.viewY, p.viewWidth, p.viewHeight);
+            }
+        }
+
+        if (Coop::PipWanted(mine) && pipTexture[other] != 0 && pipWidth[other] > 0)
+        {
+            // A corner (the bottom right) of this picture's rectangle: a third of its width, a frame round it
+            const s32 cornerWidth = p.viewWidth * 30 / 100;
+            const s32 cornerHeight = p.viewHeight * 30 / 100;
+            const s32 margin = std::max(8, p.viewWidth / 60);
+            const s32 cornerX = p.viewX + p.viewWidth - cornerWidth - margin;
+            const s32 cornerY = p.viewY + margin;
+            gl.Enable(0x0C11);
+            gl.Scissor(cornerX - 3, cornerY - 3, cornerWidth + 6, cornerHeight + 6);
+            gl.ClearColor(1.0f, 0.70f, 0.10f, 1.0f);
+            gl.Clear(GL_COLOR_BUFFER_BIT);
+            gl.Disable(0x0C11);
+            gl.Viewport(cornerX, cornerY, cornerWidth, cornerHeight);
+            gl.ActiveTexture(GL_TEXTURE0);
+            gl.BindTexture(GL_TEXTURE_2D, pipTexture[other]);
+            gl.UseProgram(p.program);
+            // (A picture copied out of a window is upside down: its rows bottom to top)
+            gl.Uniform4f(gl.GetUniformLocation(p.program, "uvRect"), 0.0f, 1.0f, 1.0f, 0.0f);
+            gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            gl.Viewport(p.viewX, p.viewY, p.viewWidth, p.viewHeight);
+            gl.BindTexture(GL_TEXTURE_2D, texture);
+        }
+    }
+
     // Two players near the leash's limit: the window's edges red over the picture
     if (f32 leash = Coop::LeashWarning(); leash > 0.0f)
     {
@@ -650,8 +730,10 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
         f32 spotY = 0.0f;
         f32 pingStrength = 0.0f;
         bool pingEdge = false;
+        f32 pingUnit = 0.02f;
+        f32 pingSquash = 0.5f;
         int pingView = target != p.window && Coop::TwoViews() ? 1 : 0;
-        if (Coop::PingMarker(pingView, &spotX, &spotY, &pingStrength, &pingEdge))
+        if (Coop::PingMarker(pingView, &spotX, &spotY, &pingStrength, &pingEdge, &pingUnit, &pingSquash))
         {
             static GLuint pingProgram = 0;
             if (pingProgram == 0)
@@ -677,6 +759,8 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
             gl.Uniform1f(gl.GetUniformLocation(pingProgram, "strength"), pingStrength);
             gl.Uniform1f(gl.GetUniformLocation(pingProgram, "pulse"), 0.5f + 0.5f * std::sin(pingSeconds * 6.0f));
             gl.Uniform1f(gl.GetUniformLocation(pingProgram, "edge"), pingEdge ? 1.0f : 0.0f);
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "unit"), pingUnit);
+            gl.Uniform1f(gl.GetUniformLocation(pingProgram, "squash"), pingSquash);
             gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             gl.Disable(0x0BE2);
         }
@@ -1105,6 +1189,9 @@ void NativeGraphicsAttachWindow(SDL_Window* window)
     Load(gl.Enable, "glEnable");
     Load(gl.Disable, "glDisable");
     Load(gl.BlendFunc, "glBlendFunc");
+    Load(gl.CopyTexImage2D, "glCopyTexImage2D");
+    Load(gl.CopyTexSubImage2D, "glCopyTexSubImage2D");
+    Load(gl.Scissor, "glScissor");
     Load(gl.ColorMask, "glColorMask");
     Load(gl.Uniform4f, "glUniform4f");
     Load(gl.Flush, "glFlush");

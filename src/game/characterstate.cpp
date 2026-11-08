@@ -26,6 +26,7 @@
 #include <cstdint>
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "fixes.h"
 #endif
 
@@ -588,6 +589,30 @@ void CharacterAgent::Land(u32 tell)
 
 u32 CharacterAgent::Link(CharacterAgent* other)
 {
+#ifdef TWIN_NATIVE
+    // Two players: a character tied to one can't be taken by the other (Cortex held by one player went to both when the other
+    // came by): refused while either is tied to someone else; tied to each other already, or free, it goes on
+    if (Coop::SecondPlayerWanted())
+    {
+        auto partnerOf = [](CharacterAgent* character) -> InstanceContext*
+        {
+            CharacterLink* tie = character->link;
+            if (tie == nullptr)
+            {
+                return nullptr;
+            }
+
+            CharacterAgent* partner = tie->bits.leader != 0 ? tie->Second() : tie->Leader();
+            return partner != nullptr ? partner->instance : nullptr;
+        };
+        InstanceContext* mine = partnerOf(this);
+        InstanceContext* theirs = partnerOf(other);
+        if ((mine != nullptr && mine != other->instance) || (theirs != nullptr && theirs != this->instance))
+        {
+            return 0;
+        }
+    }
+#endif
     Unlink();
     link = CharacterLink::Construct(Allocate<CharacterLink>(), this, other, 1);
     other->link = CharacterLink::Construct(Allocate<CharacterLink>(), other, this, 0);

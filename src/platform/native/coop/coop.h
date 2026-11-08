@@ -77,7 +77,13 @@ float LeashWarning();
 // The ping both players see (a player's camera's look marked: the first's middle mouse button, the second's R3): where it is in a
 // view's picture (view 0 the first player's window, 1 the second's; -1 to 1, the picture's middle 0), how strong, and whether it's
 // off to the picture's edge (out of view); false when there's none
-bool PingMarker(int view, float* x, float* y, float* strength, bool* edge);
+bool PingMarker(int view, float* x, float* y, float* strength, bool* edge, float* scale, float* squash);
+// Whether a player (0 the first, 1 the second) asked for a small picture of the other's view in a corner of their window
+bool PipWanted(int viewer);
+// The checkpoint's wait for both players (coopgame.cpp's HoldsBody: a body setting a checkpoint, the checkpoint's instance): true to
+// hold it back while the other player isn't in its range. The game's bottom line of text (a short sentence, no accents; "" hides)
+bool CheckpointWaitHolds(InstanceContext* checkpoint);
+void ShowBottomLine(const char* text);
 bool RidingHides(const ModelNode* node);
 // The second player's character drawn green (ogi.cpp's ModelNode::Draw): whether a model is its, and a light's colour made green
 bool TintsGreen(const ModelNode* node);

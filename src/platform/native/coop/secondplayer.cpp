@@ -28,6 +28,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <vector>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -374,9 +375,23 @@ float StickOf(GamePad* pad, bool vertical)
     return std::fabs(value) < 0.12f ? 0.0f : value;
 }
 
+}
+
+// Who rides in the other's backpack now (0 the first player, 1 the second, -1 nobody): defined with the backpack below
+int RiderPlayer();
+
+namespace
+{
 void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera, GamePad* pad)
 {
     Orbit& orbit = g_Orbits[player];
+    // The rider's view is the carrier's (copied by OrbitCameras): its own stick and mouse turn nothing
+    if (RiderPlayer() == player)
+    {
+        orbit.camera = nullptr;
+        return;
+    }
+
     CharacterAgent* agent = AgentOf(character);
     if (character == nullptr || camera == nullptr || character->place == nullptr || camera->place == nullptr || agent == nullptr ||
         agent->vehicle != nullptr || character->chunk == nullptr)
@@ -500,6 +515,21 @@ void OrbitCameras()
     {
         OrbitCamera(1, second, CameraOf(second), pads != nullptr ? pads->pads[1] : nullptr);
     }
+
+    // The rider sees what the carrier sees: its camera put where the carrier's is, each frame
+    int rider = RiderPlayer();
+    if (rider >= 0 && second != nullptr)
+    {
+        InstanceContext* riderCamera = rider == 0 ? ViewCamera(controller) : CameraOf(second);
+        InstanceContext* carrierCamera = rider == 0 ? CameraOf(second) : ViewCamera(controller);
+        if (riderCamera != nullptr && carrierCamera != nullptr && riderCamera != carrierCamera && riderCamera->place != nullptr &&
+            carrierCamera->place != nullptr)
+        {
+            RotateAndTranslate(carrierCamera->place);
+            Matrix4x4 same = carrierCamera->place->matrix;
+            SetPlaceMatrix(riderCamera->place, &same);
+        }
+    }
 }
 }
 
@@ -521,13 +551,58 @@ struct PingScreen
     float x = 0.0f;
     float y = 0.0f;
     bool edge = false;
+    // The picture's height (-1 to 1: 2) a world unit takes at the ping's depth, and how flat a ring on the ground is seen (1 from
+    // straight above, 0 from the side)
+    float scale = 0.02f;
+    float squash = 0.5f;
 };
 PingScreen g_PingScreen[2];
 constexpr float PingSeconds = 7.0f;
 constexpr float PingReach = 250.0f;
-// The extra life's chime (oleg.cpp), a little louder than there
-constexpr u32 PingSound = 0x10A;
-constexpr float PingVolume = 0.35f;
+
+// A short two-note notification, made here (not one of the game's sounds): a soft "plim" played through its own audio stream
+void PlayPingChime()
+{
+    static SDL_AudioStream* stream = nullptr;
+    static bool tried = false;
+    if (!tried)
+    {
+        tried = true;
+        SDL_AudioSpec spec = {};
+        spec.format = SDL_AUDIO_S16;
+        spec.channels = 1;
+        spec.freq = 44100;
+        stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+        if (stream != nullptr)
+        {
+            SDL_ResumeAudioStreamDevice(stream);
+        }
+    }
+
+    if (stream == nullptr)
+    {
+        return;
+    }
+
+    constexpr int Rate = 44100;
+    constexpr int Samples = Rate * 22 / 100;
+    static std::vector<s16> tone;
+    if (tone.empty())
+    {
+        tone.resize(Samples);
+        for (int i = 0; i < Samples; i++)
+        {
+            float t = static_cast<float>(i) / Rate;
+            // Two notes (an octave and a fifth up), the second from 70 ms on, each fading out fast
+            float first = std::sin(2.0f * 3.14159265f * 880.0f * t) * std::exp(-t * 22.0f);
+            float later = t >= 0.07f ? std::sin(2.0f * 3.14159265f * 1318.5f * (t - 0.07f)) * std::exp(-(t - 0.07f) * 20.0f) : 0.0f;
+            float fadeIn = std::fmin(1.0f, t * 400.0f);
+            tone[i] = static_cast<s16>(std::fmax(-1.0f, std::fmin(1.0f, (first * 0.6f + later * 0.5f) * fadeIn)) * 6500.0f);
+        }
+    }
+
+    SDL_PutAudioStreamData(stream, tone.data(), static_cast<int>(tone.size() * sizeof(s16)));
+}
 
 void MakePing(int player)
 {
@@ -559,13 +634,49 @@ void MakePing(int player)
     g_Ping.active = true;
     g_Ping.at = {hit.x, hit.y, hit.z, 1.0f};
     g_Ping.since = SDL_GetTicksNS();
-    PlaySoundById(PingVolume, OwnScale, PingSound, 0, 0, -1);
+    PlayPingChime();
     Native::Log("second player: player %d pinged (%.1f, %.1f, %.1f)", player + 1, hit.x, hit.y, hit.z);
+}
+
+// The small picture of the other player's view in a corner (a toggle: the first player's V key, the second's L3): who asked for it
+bool g_PipWanted[2] = {false, false};
+
+void PipButtons()
+{
+    static bool was[2] = {false, false};
+    bool down[2] = {false, false};
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    down[0] = keys != nullptr && keys[SDL_SCANCODE_V];
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
+    if (second != nullptr && second->info != nullptr)
+    {
+        down[1] = (second->now & (1u << PadL3)) != 0;
+    }
+
+    // $TWIN_P2_TEST_PIP=seconds (tests): the first player's turned on then
+    static const char* test = std::getenv("TWIN_P2_TEST_PIP");
+    if (test != nullptr && static_cast<double>(SDL_GetTicks()) / 1000.0 >= std::atof(test))
+    {
+        g_PipWanted[0] = true;
+    }
+
+    for (int player = 0; player < 2; player++)
+    {
+        if (down[player] && !was[player])
+        {
+            g_PipWanted[player] = !g_PipWanted[player];
+            Native::Log("second player: player %d's picture of the other %s", player + 1, g_PipWanted[player] ? "on" : "off");
+        }
+
+        was[player] = down[player];
+    }
 }
 
 // Once a frame in play: the buttons that ping
 void PingFrame()
 {
+    PipButtons();
     GameController* controller = G_GameController;
     if (controller == nullptr || controller->State() != GameController::StatePlaying)
     {
@@ -650,6 +761,8 @@ void ProjectPing(int view)
 
     float x = cx * projection.m[0][0] / cz;
     float y = cy * projection.m[1][1] / cz;
+    out.scale = projection.m[1][1] / cz;
+    out.squash = std::fmax(0.18f, std::fmin(1.0f, std::fabs(toCamera.m[1][2])));
     out.edge = std::fabs(x) > 0.92f || std::fabs(y) > 0.92f;
     out.x = std::fmax(-0.92f, std::fmin(0.92f, x));
     out.y = std::fmax(-0.92f, std::fmin(0.92f, y));
@@ -664,7 +777,12 @@ void ProjectPing(int view)
 }
 }
 
-bool PingMarker(int view, float* x, float* y, float* strength, bool* edge)
+bool PipWanted(int viewer)
+{
+    return viewer >= 0 && viewer <= 1 && g_PipWanted[viewer];
+}
+
+bool PingMarker(int view, float* x, float* y, float* strength, bool* edge, float* scale, float* squash)
 {
     if (!g_Ping.active || view < 0 || view > 1 || !g_PingScreen[view].on)
     {
@@ -680,6 +798,8 @@ bool PingMarker(int view, float* x, float* y, float* strength, bool* edge)
     *x = g_PingScreen[view].x;
     *y = g_PingScreen[view].y;
     *edge = g_PingScreen[view].edge;
+    *scale = g_PingScreen[view].scale;
+    *squash = g_PingScreen[view].squash;
     // Strong at first, fading out through the last second
     *strength = age > PingSeconds - 1.0f ? (PingSeconds - age) : 1.0f;
     return true;
@@ -831,6 +951,9 @@ struct Ride
     u32 collision = 0;
 };
 Ride g_Ride;
+// When a ride last started or ended: a press within a moment of it is ignored (the log showed ten changes a second at a boss)
+u64 g_RideChanged = 0;
+constexpr u64 RideDebounce = 400000000ull;
 
 InstanceContext* PlayerOf(int player)
 {
@@ -864,6 +987,7 @@ void StartRide(int rider)
         return;
     }
 
+    g_RideChanged = SDL_GetTicksNS();
     g_Ride.rider = rider;
     g_Ride.instance = instance;
     g_Ride.pad = controls->pad;
@@ -881,6 +1005,8 @@ void EndRide()
     {
         return;
     }
+
+    g_RideChanged = SDL_GetTicksNS();
 
     InstanceContext* instance = g_Ride.instance;
     if (instance != nullptr && InstanceLive(instance) && instance == PlayerOf(g_Ride.rider))
@@ -970,6 +1096,12 @@ void BackpackFrame()
 {
     g_Leash = 0.0f;
     bool pressed[2] = {BackpackPressed(0), BackpackPressed(1)};
+    if (SDL_GetTicksNS() - g_RideChanged < RideDebounce)
+    {
+        pressed[0] = false;
+        pressed[1] = false;
+    }
+
     // $TWIN_P2_TEST_BACKPACK="in,out" (tests): the second player into the first's backpack that many seconds in, out at the second
     static const char* test = std::getenv("TWIN_P2_TEST_BACKPACK");
     if (test != nullptr)
@@ -981,6 +1113,20 @@ void BackpackFrame()
         {
             stage++;
             pressed[1] = true;
+        }
+    }
+
+    // $TWIN_P1_TEST_BACKPACK="in,out" (tests): the first player into the second's backpack that many seconds in, out at the second
+    static const char* testFirst = std::getenv("TWIN_P1_TEST_BACKPACK");
+    if (testFirst != nullptr)
+    {
+        static int stage = 0;
+        double seconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+        const char* comma = std::strchr(testFirst, ',');
+        if ((stage == 0 && seconds >= std::atof(testFirst)) || (stage == 1 && comma != nullptr && seconds >= std::atof(comma + 1)))
+        {
+            stage++;
+            pressed[0] = true;
         }
     }
 
@@ -1038,26 +1184,80 @@ namespace
 const ModelNode* g_SecondModel = nullptr;
 }
 
+namespace
+{
+// Which player each thing follows (true: the second): kept, so a thing between the two (Aku Aku, an enemy, Cortex) doesn't flip
+// from one to the other each step as it moves (Aku Aku jumped between them and showed on both)
+std::unordered_map<const InstanceContext*, bool> g_Follows;
+
+float DistanceBetween(ObjectPlace* a, ObjectPlace* b)
+{
+    a->SyncPosition();
+    b->SyncPosition();
+    float dx = a->position.x - b->position.x;
+    float dy = a->position.y - b->position.y;
+    float dz = a->position.z - b->position.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// The player a thing follows: the one it follows now unless the other is well nearer (a quarter nearer and 3 units), the one
+// whose backpack the other rides in alone while it's ridden (the rider isn't in the world)
+bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, InstanceContext* second)
+{
+    if (g_Ride.rider == 0)
+    {
+        return true;
+    }
+
+    if (g_Ride.rider == 1)
+    {
+        return false;
+    }
+
+    if (thing == second)
+    {
+        return true;
+    }
+
+    if (thing == first || thing->place == nullptr || first->place == nullptr || second->place == nullptr)
+    {
+        return false;
+    }
+
+    if (g_Follows.size() > 8192)
+    {
+        g_Follows.clear();
+    }
+
+    float toFirst = DistanceBetween(thing->place, first->place);
+    float toSecond = DistanceBetween(thing->place, second->place);
+    bool& follows = g_Follows[thing];
+    if (follows)
+    {
+        if (toFirst < toSecond - 3.0f && toFirst < toSecond * 0.75f)
+        {
+            follows = false;
+        }
+    }
+    else if (toSecond < toFirst - 3.0f && toSecond < toFirst * 0.75f)
+    {
+        follows = true;
+    }
+
+    return follows;
+}
+}
+
 InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
 {
     InstanceContext* second = g_SecondModel != nullptr ? SecondPlayer() : nullptr;
-    if (from == nullptr || played == nullptr || second == nullptr || g_Ride.rider >= 0 || from->place == nullptr ||
-        played->place == nullptr || second->place == nullptr || from->chunk == nullptr)
+    if (from == nullptr || played == nullptr || second == nullptr || from->place == nullptr || played->place == nullptr ||
+        second->place == nullptr || from->chunk == nullptr)
     {
         return played;
     }
 
-    auto squared = [](ObjectPlace* a, ObjectPlace* b)
-    {
-        a->SyncPosition();
-        b->SyncPosition();
-        float dx = a->position.x - b->position.x;
-        float dy = a->position.y - b->position.y;
-        float dz = a->position.z - b->position.z;
-        return dx * dx + dy * dy + dz * dz;
-    };
-
-    return squared(from->place, second->place) < squared(from->place, played->place) ? second : played;
+    return FollowsSecond(from, played, second) ? second : played;
 }
 
 // "The player" for each thing the world steps (instances.cpp's ChunkInstances::Update, around each node's update): the game asks
@@ -1147,7 +1347,7 @@ void BeginObjectUpdate(InstanceContext* owner)
 {
     // $TWIN_P2_NO_SWAP (tests): the world sees the first player only, as before
     static const bool off = std::getenv("TWIN_P2_NO_SWAP") != nullptr;
-    if (off || g_Swapped || g_SecondRef == nullptr || g_SecondRefFor == nullptr || owner == nullptr || g_Ride.rider >= 0)
+    if (off || g_Swapped || g_SecondRef == nullptr || g_SecondRefFor == nullptr || owner == nullptr)
     {
         return;
     }
@@ -1172,12 +1372,10 @@ void BeginObjectUpdate(InstanceContext* owner)
         return;
     }
 
-    if (owner != second)
+    // (Whose the thing is: the second player's, or the first's with the first the one who rides: the world then sees the carrier)
+    if (!FollowsSecond(owner, first, second))
     {
-        if (owner->place == nullptr || SquaredBetween(owner->place, second->place) >= SquaredBetween(owner->place, first->place))
-        {
-            return;
-        }
+        return;
     }
 
     GameProgress& progress = controller->progress;
@@ -1280,6 +1478,174 @@ int SharedPadMode()
     return state == GameController::StatePaused ? PadPaused : PadMenus;
 }
 
+int RiderPlayer()
+{
+    return g_Ride.rider;
+}
+
+// The checkpoint waits for both players: a script body that sets one (behaviours.cpp's ExecuteState asks HoldsBody first) is held
+// while the other player isn't in its range; the player there is held still (their pad taken: the bottom line says so) until the
+// other arrives or they cancel (X, or B on the pad: walking on, asked again when they come back into range)
+namespace
+{
+struct CheckpointWait
+{
+    InstanceContext* checkpoint = nullptr;
+    u64 asked = 0;
+    int waiter = -1;
+    bool cancelled[2] = {false, false};
+    bool frozen[2] = {false, false};
+    GamePad* pad[2] = {nullptr, nullptr};
+    bool showing = false;
+};
+CheckpointWait g_Wait;
+constexpr float CheckpointRange = 15.0f;
+
+void Unfreeze(int player)
+{
+    if (!g_Wait.frozen[player])
+    {
+        return;
+    }
+
+    g_Wait.frozen[player] = false;
+    InstanceContext* instance = player == 0 ? FirstPlayer() : SecondPlayer();
+    ControlsNode* controls = ControlsOf(instance);
+    if (controls != nullptr && controls->pad == nullptr && g_Ride.rider != player)
+    {
+        controls->pad = g_Wait.pad[player];
+    }
+}
+
+void EndWait()
+{
+    Unfreeze(0);
+    Unfreeze(1);
+    if (g_Wait.showing)
+    {
+        ShowBottomLine("");
+    }
+
+    g_Wait = CheckpointWait();
+}
+}
+
+bool CheckpointWaitHolds(InstanceContext* checkpoint)
+{
+    GameController* controller = G_GameController;
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = SecondPlayer();
+    if (!Wanted() || controller == nullptr || controller->State() != GameController::StatePlaying || first == nullptr ||
+        second == nullptr || checkpoint == nullptr || checkpoint->place == nullptr || first->place == nullptr ||
+        second->place == nullptr)
+    {
+        return false;
+    }
+
+    bool near0 = DistanceBetween(checkpoint->place, first->place) < CheckpointRange;
+    bool near1 = DistanceBetween(checkpoint->place, second->place) < CheckpointRange;
+    if (near0 && near1)
+    {
+        // Both there: it goes through now
+        EndWait();
+        Native::Log("second player: checkpoint, both players there");
+        return false;
+    }
+
+    if (g_Wait.checkpoint != checkpoint)
+    {
+        EndWait();
+        g_Wait.checkpoint = checkpoint;
+        Native::Log("second player: checkpoint waits for the other player");
+    }
+
+    g_Wait.asked = SDL_GetTicksNS();
+    g_Wait.waiter = near0 ? 0 : (near1 ? 1 : -1);
+    return true;
+}
+
+// Once a frame: the waiting player held still or let go, the line shown, the cancel buttons
+void CheckpointWaitFrame()
+{
+    if (g_Wait.checkpoint == nullptr)
+    {
+        return;
+    }
+
+    // Not asked about for a moment (the body ran, or the script moved on): over
+    if (SDL_GetTicksNS() - g_Wait.asked > 300000000ull)
+    {
+        EndWait();
+        return;
+    }
+
+    static bool was[2] = {false, false};
+    bool down[2] = {false, false};
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    down[0] = keys != nullptr && keys[SDL_SCANCODE_X];
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
+    if (second != nullptr && second->info != nullptr)
+    {
+        down[1] = (second->now & (1u << PadCircle)) != 0;
+    }
+
+    for (int player = 0; player < 2; player++)
+    {
+        InstanceContext* instance = player == 0 ? FirstPlayer() : SecondPlayer();
+        bool leaving = instance != nullptr && g_Wait.checkpoint->place != nullptr && instance->place != nullptr &&
+                       DistanceBetween(g_Wait.checkpoint->place, instance->place) > CheckpointRange + 4.0f;
+        if (leaving)
+        {
+            // Out of the range again: asks to wait the next time it's in
+            g_Wait.cancelled[player] = false;
+        }
+
+        if (down[player] && !was[player] && g_Wait.waiter == player)
+        {
+            g_Wait.cancelled[player] = true;
+        }
+
+        was[player] = down[player];
+        bool shouldFreeze = g_Wait.waiter == player && !g_Wait.cancelled[player] && instance != nullptr && g_Ride.rider != player;
+        if (shouldFreeze && !g_Wait.frozen[player])
+        {
+            ControlsNode* controls = ControlsOf(instance);
+            if (controls != nullptr)
+            {
+                g_Wait.pad[player] = controls->pad;
+                controls->pad = nullptr;
+                g_Wait.frozen[player] = true;
+            }
+        }
+        else if (!shouldFreeze)
+        {
+            Unfreeze(player);
+        }
+
+        if (g_Wait.frozen[player])
+        {
+            if (CharacterAgent* agent = AgentOf(instance))
+            {
+                agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+            }
+        }
+    }
+
+    bool waiting = g_Wait.waiter >= 0 && !g_Wait.cancelled[g_Wait.waiter];
+    if (waiting)
+    {
+        ShowBottomLine(g_Wait.waiter == 0 ? "Aguardando o outro jogador no checkpoint (X cancela)"
+                                          : "Aguardando o outro jogador no checkpoint (B cancela)");
+        g_Wait.showing = true;
+    }
+    else if (g_Wait.showing)
+    {
+        ShowBottomLine("");
+        g_Wait.showing = false;
+    }
+}
+
 bool RidingHides(const ModelNode* node)
 {
     if (node == nullptr)
@@ -1326,6 +1692,7 @@ void SecondPlayerFrame()
     g_SecondModel = ModelOf(SecondPlayer());
     KeepSecondRef();
     PingFrame();
+    CheckpointWaitFrame();
 
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;
@@ -1333,19 +1700,22 @@ void SecondPlayerFrame()
     // Out of play since it was there (a death's restart, a level's load): put beside the first player again once play is back, the
     // same character (made again only when it's gone: a second made each time stayed, a crowd of them after a few deaths)
     static bool returning = false;
+    // Whether it's a cutscene it comes back from (where it was is kept if that's near the first player: it needn't ride)
+    static bool fromCutscene = false;
     if (state != GameController::StatePlaying)
     {
-        // A cutscene: the second player comes back beside the first once it's over (the cutscene may have moved the first)
         if (state == GameController::StateWatching && Valid())
         {
             EndRide();
             returning = true;
+            fromCutscene = true;
             playingFrames = 0;
         }
         else if (state != GameController::StateWatching && state != GameController::StatePaused &&
                  state != GameController::StateWaiting)
         {
             returning = true;
+            fromCutscene = false;
             playingFrames = 0;
             // (A death's restart, a level's load: both come back on foot)
             EndRide();
@@ -1356,11 +1726,18 @@ void SecondPlayerFrame()
 
     if (returning && Valid())
     {
-        // Back in play (a death's restart, a cutscene's end): into the first player's backpack, carried from the first frame (put
-        // beside the first it sometimes landed in a wall or under the ground, or stayed where it died, dying again); Select gets out
+        // Back in play: after a death or a level's load into the first player's backpack, carried from the first frame (put beside
+        // the first it sometimes landed in a wall or under the ground, or stayed where it died, dying again); Select gets out. After a
+        // cutscene it stays where it was when that's near the first player (the players need not ride at every cutscene), else the
+        // backpack (the cutscene took the first player far)
         returning = false;
         playingFrames = 0;
-        if (g_Ride.rider < 0)
+        InstanceContext* first = FirstPlayer();
+        InstanceContext* second = g_Second.instance;
+        bool near = fromCutscene && first != nullptr && first->place != nullptr && second->place != nullptr &&
+                    DistanceBetween(first->place, second->place) < 40.0f;
+        fromCutscene = false;
+        if (!near && g_Ride.rider < 0)
         {
             StartRide(1);
             Native::Log("second player: back in play, in the first player's backpack");
