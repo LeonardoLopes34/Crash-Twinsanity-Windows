@@ -1743,6 +1743,11 @@ bool BlocksResume()
 
 bool HidesShadow(const InstanceContext* instance)
 {
+    if (RidingHidesShadow(instance))
+    {
+        return true;
+    }
+
     return g_Backpack.applied && instance == g_Backpack.instance;
 }
 
@@ -1821,6 +1826,11 @@ bool Active()
 
 bool ModelDrawn(ModelNode* node)
 {
+    if (RidingHides(node))
+    {
+        return true;
+    }
+
     if (g_Session.GetRole() == Role::Off || node == nullptr)
     {
         return false;

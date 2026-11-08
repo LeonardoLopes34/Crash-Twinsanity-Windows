@@ -22,6 +22,8 @@
 #include "game/player.h"
 #include "game/reference.h"
 
+#include <SDL3/SDL.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -393,6 +395,184 @@ int TwoViewsFrame()
     return drawn;
 }
 
+// The backpack (one world, two characters): either player rides in the other's backpack, its character hidden (ModelDrawn,
+// HidesShadow), out of the others' way (collision off), its pad taken (kept to give back), its hits and pickups off, carried where the
+// other is every frame (its camera follows it there). Select on the player's gamepad (F5 on the keyboard for the first player) in and
+// out; the carrier's Select lets the rider out
+namespace
+{
+struct Ride
+{
+    int rider = -1;
+    InstanceContext* instance = nullptr;
+    GamePad* pad = nullptr;
+    u32 collision = 0;
+};
+Ride g_Ride;
+
+InstanceContext* PlayerOf(int player)
+{
+    return player == 0 ? FirstPlayer() : SecondPlayer();
+}
+
+ControlsNode* ControlsOf(InstanceContext* instance)
+{
+    return instance != nullptr ? static_cast<ControlsNode*>(GetGameNode(&instance->nodes, NodeControls)) : nullptr;
+}
+
+void PutAt(InstanceContext* instance, const Vector4& to)
+{
+    instance->place->SyncPosition();
+    Vector4 at = to;
+    at.w = 1.0f;
+    if (instance->place->MoveTo(&at))
+    {
+        QueueObject(instance);
+    }
+}
+
+void StartRide(int rider)
+{
+    InstanceContext* instance = PlayerOf(rider);
+    InstanceContext* carrier = PlayerOf(1 - rider);
+    ControlsNode* controls = ControlsOf(instance);
+    CharacterAgent* agent = AgentOf(instance);
+    if (instance == nullptr || carrier == nullptr || controls == nullptr || agent == nullptr)
+    {
+        return;
+    }
+
+    g_Ride.rider = rider;
+    g_Ride.instance = instance;
+    g_Ride.pad = controls->pad;
+    g_Ride.collision = instance->flags.collisionActive;
+    controls->pad = nullptr;
+    instance->flags.collisionActive = 0;
+    agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+    agent->eventFlags.eventsOff = 1;
+    Native::Log("second player: player %d into player %d's backpack", rider + 1, 2 - rider);
+}
+
+void EndRide()
+{
+    if (g_Ride.rider < 0)
+    {
+        return;
+    }
+
+    InstanceContext* instance = g_Ride.instance;
+    if (instance != nullptr && InstanceLive(instance) && instance == PlayerOf(g_Ride.rider))
+    {
+        ControlsNode* controls = ControlsOf(instance);
+        CharacterAgent* agent = AgentOf(instance);
+        if (controls != nullptr && controls->pad == nullptr)
+        {
+            controls->pad = g_Ride.pad;
+        }
+
+        if (agent != nullptr)
+        {
+            agent->eventFlags.eventsOff = 0;
+        }
+
+        instance->flags.collisionActive = g_Ride.collision;
+        // Out beside the carrier (a little above: never under the ground)
+        InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
+        if (carrier != nullptr && carrier->place != nullptr)
+        {
+            carrier->place->SyncPosition();
+            Vector4 to = carrier->place->position;
+            to.x += 0.8f;
+            to.y += 0.5f;
+            PutAt(instance, to);
+        }
+    }
+
+    Native::Log("second player: player %d out of the backpack", g_Ride.rider + 1);
+    g_Ride = Ride();
+}
+
+// Select pressed this frame on a player's pad (F5 too for the first player)
+bool BackpackPressed(int player)
+{
+    static bool was[2] = {false, false};
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* pad = pads != nullptr ? pads->pads[player] : nullptr;
+    bool down = pad != nullptr && pad->info != nullptr && (pad->now & (1u << PadSelect)) != 0;
+    if (player == 0)
+    {
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        down = down || (keys != nullptr && keys[SDL_SCANCODE_F5]);
+    }
+
+    bool pressed = down && !was[player];
+    was[player] = down;
+    return pressed;
+}
+
+void BackpackFrame()
+{
+    bool pressed[2] = {BackpackPressed(0), BackpackPressed(1)};
+    // $TWIN_P2_TEST_BACKPACK="in,out" (tests): the second player into the first's backpack that many seconds in, out at the second
+    static const char* test = std::getenv("TWIN_P2_TEST_BACKPACK");
+    if (test != nullptr)
+    {
+        static int stage = 0;
+        double seconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+        const char* comma = std::strchr(test, ',');
+        if ((stage == 0 && seconds >= std::atof(test)) || (stage == 1 && comma != nullptr && seconds >= std::atof(comma + 1)))
+        {
+            stage++;
+            pressed[1] = true;
+        }
+    }
+
+    if (g_Ride.rider >= 0)
+    {
+        // The rider or the carrier lets the rider out; gone (made again), it's over
+        if (pressed[0] || pressed[1] || g_Ride.instance != PlayerOf(g_Ride.rider) || PlayerOf(1 - g_Ride.rider) == nullptr)
+        {
+            EndRide();
+            return;
+        }
+
+        InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
+        carrier->place->SyncPosition();
+        PutAt(g_Ride.instance, carrier->place->position);
+        if (CharacterAgent* agent = AgentOf(g_Ride.instance))
+        {
+            agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+        }
+
+        return;
+    }
+
+    for (int player = 0; player < 2; player++)
+    {
+        if (pressed[player])
+        {
+            StartRide(player);
+            return;
+        }
+    }
+}
+
+ModelNode* ModelOf(InstanceContext* instance)
+{
+    return instance != nullptr ? static_cast<ModelNode*>(GetGameNode(&instance->nodes, NodeModel)) : nullptr;
+}
+}
+
+bool RidingHides(const ModelNode* node)
+{
+    return g_Ride.rider >= 0 && node != nullptr && node == ModelOf(g_Ride.instance);
+}
+
+bool RidingHidesShadow(const InstanceContext* instance)
+{
+    return g_Ride.rider >= 0 && instance != nullptr && instance == g_Ride.instance;
+}
+
 void SecondPlayerFrame()
 {
     if (!Wanted())
@@ -413,6 +593,8 @@ void SecondPlayerFrame()
         {
             returning = true;
             playingFrames = 0;
+            // (A death's restart, a level's load: both come back on foot)
+            EndRide();
         }
 
         return;
@@ -476,11 +658,12 @@ void SecondPlayerFrame()
         // The pad given again when it wasn't there yet (a gamepad plugged in later)
         auto* controls = static_cast<ControlsNode*>(GetGameNode(&g_Second.instance->nodes, NodeControls));
         GamePad* pad = SecondPad();
-        if (controls != nullptr && controls->pad == nullptr && pad != nullptr && pad->info != nullptr)
+        if (controls != nullptr && controls->pad == nullptr && pad != nullptr && pad->info != nullptr && g_Ride.rider != 1)
         {
             controls->pad = pad;
         }
 
+        BackpackFrame();
         return;
     }
 

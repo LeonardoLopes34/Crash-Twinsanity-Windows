@@ -45,6 +45,9 @@ bool DrawingSecondView();
 void NoteSeen(InstanceContext* instance, unsigned distance, bool inView);
 // Whether the second camera saw an instance at its last drawings (ogi.cpp's models, shadows.cpp, agentnodes.cpp)
 bool SeenBySecondView(const InstanceContext* instance);
+// The backpack between the two players on this PC (Select, F5): whether a model or a shadow is the rider's (not drawn)
+bool RidingHides(const ModelNode* node);
+bool RidingHidesShadow(const InstanceContext* instance);
 // The camera matrix a character's stick is read against (controls.cpp's CharacterControls::Frame): with the second player in play,
 // the camera that character's player sees (the game reads the chunk's last drawn camera, the other player's half the frames); none
 // otherwise (the game's own)
