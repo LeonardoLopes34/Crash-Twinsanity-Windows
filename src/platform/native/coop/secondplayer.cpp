@@ -2189,6 +2189,17 @@ void SecondPlayerFrame()
     PingFrame();
     CheckpointWaitFrame();
 
+    // $TWIN_P2_TEST_DIE=seconds (tests): at that time the lives are emptied and the game restarts from the checkpoint, as a death does
+    static const char* testDie = std::getenv("TWIN_P2_TEST_DIE");
+    static bool died = false;
+    if (testDie != nullptr && !died && G_GameController != nullptr && G_GameController->State() == GameController::StatePlaying &&
+        static_cast<double>(SDL_GetTicks()) / 1000.0 >= std::atof(testDie))
+    {
+        died = true;
+        G_GameController->progress.counts.lives = 0;
+        G_GameController->RestartFromCheckpoint();
+    }
+
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;
     static int playingFrames = 0;

@@ -44,6 +44,7 @@
 
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
+#include "native.h"
 #include "ui/nativeui.h"
 #endif
 
@@ -1120,6 +1121,16 @@ u32 GameController::EndWhackaworm()
 
 u32 GameController::RestartFromCheckpoint()
 {
+#ifdef TWIN_NATIVE
+    // Two players on this PC: no game over from dying. With the lives out the game reloaded the whole level from its start (the
+    // Mecha Bandicoot fight began at the top of the arena, not at its cave, and the fight's scripts were left half done): the
+    // lives filled up and the restart goes to the last checkpoint instead
+    if (progress.counts.lives == 0 && Coop::SecondPlayerWanted())
+    {
+        progress.counts.lives = 3;
+        Native::Log("second player: the lives were out, filled up (no game over with two players)");
+    }
+#endif
     if (progress.counts.lives == 0)
     {
         return ForceGameOver();
