@@ -1931,10 +1931,15 @@ struct CheckpointWait
     bool frozen[2] = {false, false};
     GamePad* pad[2] = {nullptr, nullptr};
     bool showing = false;
-    // A cutscene's wait (the two players near each other) rather than a checkpoint's (both near it)
+    // A cutscene's wait (the two players near each other) rather than a checkpoint's (both near it), and when it began
     bool cutscene = false;
+    u64 since = 0;
 };
 CheckpointWait g_Wait;
+// A cutscene let go whatever the other's place (when the other player can't be called into the backpack: another area)
+bool g_CutsceneForce = false;
+// How long a cutscene waits for the other player before they're called (put in the backpack of the one waiting)
+constexpr u64 CutsceneWaitNs = 8000000000ull;
 constexpr float CheckpointRange = 15.0f;
 // A cutscene starts once the players are this near each other (or one rides in the other's backpack)
 constexpr float CutsceneTogether = 30.0f;
@@ -2017,10 +2022,11 @@ bool CutsceneWaitHolds(InstanceContext* director)
         return false;
     }
 
-    bool together = g_Ride.rider >= 0 ||
+    bool together = g_Ride.rider >= 0 || g_CutsceneForce ||
                     (first->chunk == second->chunk && DistanceBetween(first->place, second->place) < CutsceneTogether);
     if (together)
     {
+        g_CutsceneForce = false;
         if (g_Wait.cutscene)
         {
             Native::Log("second player: cutscene, both players there");
@@ -2035,6 +2041,7 @@ bool CutsceneWaitHolds(InstanceContext* director)
     {
         EndWait();
         g_Wait.cutscene = true;
+        g_Wait.since = SDL_GetTicksNS();
         // (A marker that there's a wait: the cutscene's place isn't used)
         g_Wait.checkpoint = first;
         Native::Log("second player: a cutscene waits for the other player");
@@ -2077,6 +2084,32 @@ void CheckpointWaitFrame()
         down[1] = (second->now & (1u << PadCircle)) != 0;
     }
 
+    // A cutscene's wait ends one way: the other player called into the backpack of the one waiting (the waiter's X or B, or after
+    // CutsceneWaitNs on its own). Walking off was a way out that left the cutscene's place behind and lost the cutscene
+    if (g_Wait.cutscene)
+    {
+        static bool wasCall[2] = {false, false};
+        int who = g_Wait.waiter >= 0 ? g_Wait.waiter : 0;
+        bool call = (down[who] && !wasCall[who]) || SDL_GetTicksNS() - g_Wait.since > CutsceneWaitNs;
+        wasCall[0] = down[0];
+        wasCall[1] = down[1];
+        if (call && g_Ride.rider < 0)
+        {
+            InstanceContext* waiting = who == 0 ? FirstPlayer() : SecondPlayer();
+            InstanceContext* other = who == 0 ? SecondPlayer() : FirstPlayer();
+            if (waiting != nullptr && other != nullptr && waiting->chunk == other->chunk)
+            {
+                Native::Log("second player: the cutscene calls player %d into player %d's backpack", 2 - who, who + 1);
+                StartRide(1 - who);
+            }
+            else
+            {
+                // In another area: it can't be carried over; the cutscene goes on without waiting
+                g_CutsceneForce = true;
+            }
+        }
+    }
+
     for (int player = 0; player < 2; player++)
     {
         InstanceContext* instance = player == 0 ? FirstPlayer() : SecondPlayer();
@@ -2088,13 +2121,15 @@ void CheckpointWaitFrame()
             g_Wait.cancelled[player] = false;
         }
 
-        if (down[player] && !was[player] && g_Wait.waiter == player)
+        // (A checkpoint's wait can be cancelled to walk on; a cutscene's can't: X there calls the other, above)
+        if (!g_Wait.cutscene && down[player] && !was[player] && g_Wait.waiter == player)
         {
             g_Wait.cancelled[player] = true;
         }
 
         was[player] = down[player];
-        bool shouldFreeze = g_Wait.waiter == player && !g_Wait.cancelled[player] && instance != nullptr && g_Ride.rider != player;
+        bool shouldFreeze = g_Wait.waiter == player && (g_Wait.cutscene || !g_Wait.cancelled[player]) && instance != nullptr &&
+                            g_Ride.rider != player;
         if (shouldFreeze && !g_Wait.frozen[player])
         {
             ControlsNode* controls = ControlsOf(instance);
@@ -2123,9 +2158,8 @@ void CheckpointWaitFrame()
     if (g_Wait.cutscene)
     {
         // The cutscene's line shows for both (the other must come near or get into the backpack)
-        ShowBottomLine(waiting ? (g_Wait.waiter == 0 ? "Aguardando o outro jogador para a cutscene (X solta)"
-                                                     : "Aguardando o outro jogador para a cutscene (B solta)")
-                               : "Aguardando o outro jogador para a cutscene");
+        ShowBottomLine(g_Wait.waiter == 1 ? "Aguardando o outro jogador para a cutscene (B chama ele)"
+                                          : "Aguardando o outro jogador para a cutscene (X chama ele)");
         g_Wait.showing = true;
     }
     else if (waiting)
@@ -2281,6 +2315,36 @@ void SecondPlayerFrame()
         }
 
         return;
+    }
+
+    // A safety net: a player whose pad has been taken away for two seconds of ordinary play (not in a backpack, not waiting, not
+    // held for a cutscene) gets it back, and it's logged. Something took it and never gave it back (frozen, unable to move)
+    {
+        static int without[2] = {0, 0};
+        for (int player = 0; player < 2; player++)
+        {
+            InstanceContext* instance = player == 0 ? FirstPlayer() : SecondPlayer();
+            ControlsNode* controls = ControlsOf(instance);
+            bool held = g_Ride.rider == player || g_Wait.frozen[player] || (player == 1 && cutsceneHeld);
+            if (controls == nullptr || controls->pad != nullptr || held || OwnPad(player) == nullptr ||
+                (player == 1 && OwnPad(1)->info == nullptr))
+            {
+                without[player] = 0;
+                continue;
+            }
+
+            if (++without[player] > 120)
+            {
+                without[player] = 0;
+                controls->pad = OwnPad(player);
+                if (CharacterAgent* agent = AgentOf(instance))
+                {
+                    agent->buttons.locked.value = 0;
+                }
+
+                Native::Log("second player: player %d had no pad for two seconds of play: given back", player + 1);
+            }
+        }
     }
 
     // Play again after a cutscene: its pad and collision given back, its inputs unlocked (the cutscene's commands locked them while
