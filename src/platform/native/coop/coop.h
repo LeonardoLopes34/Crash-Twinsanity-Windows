@@ -80,6 +80,10 @@ float LeashWarning();
 bool PingMarker(int view, float* x, float* y, float* strength, bool* edge, float* scale, float* squash);
 // Whether a player (0 the first, 1 the second) asked for a small picture of the other's view in a corner of their window
 bool PipWanted(int viewer);
+// The minimap's circle for a view (0 the first player's window, 1 the second's): dots as four floats each (x and y from -1 to 1 on
+// the circle, the kind: 1 enemy, 2 crate, 3 wumpa, 4 other character, 5 the other player, 6 the ping; and one unused), how many,
+// and which way the view's own character faces on it (radians, 0 up). False when there's none to draw
+bool MinimapDots(int view, const float** dots, int* count, float* facing);
 // The checkpoint's wait for both players (coopgame.cpp's HoldsBody: a body setting a checkpoint, the checkpoint's instance): true to
 // hold it back while the other player isn't in its range. The game's bottom line of text (a short sentence, no accents; "" hides)
 bool CheckpointWaitHolds(InstanceContext* checkpoint);

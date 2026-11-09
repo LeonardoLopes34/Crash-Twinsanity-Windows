@@ -533,6 +533,283 @@ void OrbitCameras()
 }
 }
 
+// The minimap: a circle in a corner of each window, centred on the player of that window and turned with its camera (up is where
+// the camera looks), with what's near: the other player, enemies, crates, wumpa and the other characters, and the ping. The things
+// listed in the world a few times a second (BeforeDraw), put on each window's circle after its picture's drawing (AfterDraw: the
+// camera matrices of that drawing). M turns the first player's on and off, the D-pad's up the second's
+namespace
+{
+constexpr int MaxMiniDots = 96;
+}
+
+// The ping's place on the ground, when there is one (defined with the ping below)
+bool PingPlace(float* x, float* z);
+
+namespace
+{
+// What a dot is: drawn in its colour (display.cpp)
+enum MiniKind : int
+{
+    MiniEnemy = 1,
+    MiniCrate = 2,
+    MiniPickup = 3,
+    MiniCharacter = 4,
+    MiniOther = 5,
+    MiniPing = 6,
+};
+// How far the circle's edge is, in world units
+constexpr float MiniRange = 60.0f;
+
+struct MiniThing
+{
+    float x, y, z;
+    int kind;
+};
+std::vector<MiniThing> g_MiniThings;
+// Each window's circle: dots (x, y in -1 to 1, kind, unused), how many, whether it shows
+struct Minimap
+{
+    float dots[MaxMiniDots * 4];
+    int count = 0;
+    bool valid = false;
+    float facing = 0.0f;
+};
+Minimap g_Minimap[2];
+bool g_MiniWanted[2] = {true, true};
+
+struct MiniScan
+{
+    InstanceContext* first;
+    InstanceContext* second;
+    ChunkData* chunk;
+    float cx, cz;
+};
+
+void ScanMini(InstanceContext* instance, void* user)
+{
+    auto* scan = static_cast<MiniScan*>(user);
+    if (instance == scan->first || instance == scan->second || instance->chunk != scan->chunk || instance->place == nullptr ||
+        instance->flags.asleep || !instance->flags.visible)
+    {
+        return;
+    }
+
+    u32 mask = instance->nodes.mask;
+    int kind = 0;
+    if ((mask & (1u << NodeCreature)) != 0)
+    {
+        kind = MiniEnemy;
+    }
+    else if ((mask & (1u << NodeCharacter)) != 0)
+    {
+        kind = MiniCharacter;
+    }
+    else if ((mask & (1u << NodeCrate)) != 0)
+    {
+        kind = MiniCrate;
+    }
+    else if ((mask & (1u << NodePickup)) != 0)
+    {
+        kind = MiniPickup;
+    }
+
+    if (kind == 0)
+    {
+        return;
+    }
+
+    instance->place->SyncPosition();
+    const Vector4& p = instance->place->position;
+    float dx = p.x - scan->cx;
+    float dz = p.z - scan->cz;
+    if (dx * dx + dz * dz > MiniRange * MiniRange * 1.2f)
+    {
+        return;
+    }
+
+    g_MiniThings.push_back({p.x, p.y, p.z, kind});
+}
+
+// A few times a second: what's near the two players
+void ListMiniThings()
+{
+    g_MiniThings.clear();
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = SecondPlayer();
+    if (first == nullptr || first->place == nullptr || first->chunk == nullptr)
+    {
+        return;
+    }
+
+    first->place->SyncPosition();
+    MiniScan scan = {first, second, first->chunk, first->place->position.x, first->place->position.z};
+    ForEachLiveInstance(ScanMini, &scan);
+    // The nearest to either player first (a crowded place fills the circle's dots from them)
+    float sx = scan.cx;
+    float sz = scan.cz;
+    float ox = sx;
+    float oz = sz;
+    if (second != nullptr && second->place != nullptr)
+    {
+        second->place->SyncPosition();
+        ox = second->place->position.x;
+        oz = second->place->position.z;
+    }
+
+    auto nearness = [&](const MiniThing& t)
+    {
+        float a = (t.x - sx) * (t.x - sx) + (t.z - sz) * (t.z - sz);
+        float b = (t.x - ox) * (t.x - ox) + (t.z - oz) * (t.z - oz);
+        return a < b ? a : b;
+    };
+    std::sort(g_MiniThings.begin(), g_MiniThings.end(),
+              [&](const MiniThing& a, const MiniThing& b) { return nearness(a) < nearness(b); });
+    if (g_MiniThings.size() > 400)
+    {
+        g_MiniThings.resize(400);
+    }
+}
+
+// After a view's drawing: the circle's dots for that view
+void ProjectMinimap(int view)
+{
+    Minimap& map = g_Minimap[view];
+    map.valid = false;
+    map.count = 0;
+    GameController* controller = G_GameController;
+    InstanceContext* centre = view == 0 ? FirstPlayer() : SecondPlayer();
+    InstanceContext* other = view == 0 ? SecondPlayer() : FirstPlayer();
+    if (controller == nullptr || centre == nullptr || centre->place == nullptr || !g_MiniWanted[view] ||
+        controller->State() != GameController::StatePlaying)
+    {
+        return;
+    }
+
+    // The camera's right and forward on the ground (the columns of the world-to-camera matrix)
+    const Matrix4x4& toCamera = controller->view.toCamera;
+    float rightX = toCamera.m[0][0];
+    float rightZ = toCamera.m[2][0];
+    float forwardX = toCamera.m[0][2];
+    float forwardZ = toCamera.m[2][2];
+    float forwardLength = std::sqrt(forwardX * forwardX + forwardZ * forwardZ);
+    if (forwardLength < 0.05f)
+    {
+        // Looking straight up or down: the heading kept from the right axis
+        forwardX = rightZ;
+        forwardZ = -rightX;
+        forwardLength = std::sqrt(forwardX * forwardX + forwardZ * forwardZ);
+        if (forwardLength < 0.05f)
+        {
+            return;
+        }
+    }
+
+    forwardX /= forwardLength;
+    forwardZ /= forwardLength;
+    float rightLength = std::sqrt(rightX * rightX + rightZ * rightZ);
+    rightX = rightLength > 0.05f ? rightX / rightLength : forwardZ;
+    rightZ = rightLength > 0.05f ? rightZ / rightLength : -forwardX;
+    centre->place->SyncPosition();
+    const Vector4 c = centre->place->position;
+    auto put = [&](float x, float z, int kind, bool clamp)
+    {
+        if (map.count >= MaxMiniDots)
+        {
+            return;
+        }
+
+        float dx = x - c.x;
+        float dz = z - c.z;
+        float mx = (dx * rightX + dz * rightZ) / MiniRange;
+        float my = (dx * forwardX + dz * forwardZ) / MiniRange;
+        float length = std::sqrt(mx * mx + my * my);
+        if (length > 0.94f)
+        {
+            if (!clamp)
+            {
+                return;
+            }
+
+            mx *= 0.94f / length;
+            my *= 0.94f / length;
+        }
+
+        float* dot = &map.dots[map.count * 4];
+        dot[0] = mx;
+        dot[1] = my;
+        dot[2] = static_cast<float>(kind);
+        dot[3] = 0.0f;
+        map.count++;
+    };
+
+    // The other player first (it's drawn over the rest, at the rim when far), the ping, then the things
+    if (other != nullptr && other->place != nullptr && other->chunk == centre->chunk)
+    {
+        other->place->SyncPosition();
+        put(other->place->position.x, other->place->position.z, MiniOther, true);
+    }
+
+    float pingX = 0.0f;
+    float pingZ = 0.0f;
+    if (PingPlace(&pingX, &pingZ))
+    {
+        put(pingX, pingZ, MiniPing, true);
+    }
+
+    for (const MiniThing& thing : g_MiniThings)
+    {
+        put(thing.x, thing.z, thing.kind, false);
+    }
+
+    // Which way the centre's character faces on the circle (its forward axis over the camera's)
+    RotateAndTranslate(centre->place);
+    const Matrix4x4& m = centre->place->matrix;
+    float faceX = m.m[2][0];
+    float faceZ = m.m[2][2];
+    map.facing = std::atan2(faceX * rightX + faceZ * rightZ, faceX * forwardX + faceZ * forwardZ);
+    map.valid = true;
+    // $TWIN_P2_LOG (tests): what's on the circle, every 2 seconds
+    static const bool log = std::getenv("TWIN_P2_LOG") != nullptr;
+    static u32 calls = 0;
+    if (log && view == 0 && ++calls % 120 == 0)
+    {
+        int kinds[7] = {};
+        for (int i = 0; i < map.count; i++)
+        {
+            kinds[static_cast<int>(map.dots[i * 4 + 2])]++;
+        }
+
+        Native::Log("second player: minimap view 0: %d dots (%d enemies, %d crates, %d wumpa, %d characters, other player %d), "
+                    "facing %.2f; %zu things listed",
+                    map.count, kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], map.facing, g_MiniThings.size());
+    }
+}
+
+void MinimapButtons()
+{
+    static bool was[2] = {false, false};
+    bool down[2] = {false, false};
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    down[0] = keys != nullptr && keys[SDL_SCANCODE_M];
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
+    if (second != nullptr && second->info != nullptr)
+    {
+        down[1] = (second->now & (1u << PadUp)) != 0;
+    }
+
+    for (int player = 0; player < 2; player++)
+    {
+        if (down[player] && !was[player])
+        {
+            g_MiniWanted[player] = !g_MiniWanted[player];
+        }
+
+        was[player] = down[player];
+    }
+}
+}
+
 // The ping: where a player's camera looks, marked for both: the first player's middle mouse button, the second's right stick pressed
 // (R3). A ring and a beam over the spot in each window (graphics/display.cpp draws it from PingMarker), the extra life's chime
 namespace
@@ -643,6 +920,7 @@ bool g_PipWanted[2] = {false, false};
 
 void PipButtons()
 {
+    MinimapButtons();
     static bool was[2] = {false, false};
     bool down[2] = {false, false};
     const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -777,6 +1055,31 @@ void ProjectPing(int view)
 }
 }
 
+bool PingPlace(float* x, float* z)
+{
+    if (!g_Ping.active || static_cast<float>(SDL_GetTicksNS() - g_Ping.since) / 1e9f > PingSeconds)
+    {
+        return false;
+    }
+
+    *x = g_Ping.at.x;
+    *z = g_Ping.at.z;
+    return true;
+}
+
+bool MinimapDots(int view, const float** dots, int* count, float* facing)
+{
+    if (view < 0 || view > 1 || !g_Minimap[view].valid)
+    {
+        return false;
+    }
+
+    *dots = g_Minimap[view].dots;
+    *count = g_Minimap[view].count;
+    *facing = g_Minimap[view].facing;
+    return true;
+}
+
 bool PipWanted(int viewer)
 {
     return viewer >= 0 && viewer <= 1 && g_PipWanted[viewer];
@@ -820,6 +1123,12 @@ void BeforeDraw()
     }
 
     g_Drawings++;
+    // The minimap's things, listed a few times a second
+    if ((g_MiniWanted[0] || g_MiniWanted[1]) && Wanted() && g_Drawings % 4 == 1)
+    {
+        ListMiniThings();
+    }
+
     // (Forgotten now and then: instances let go leave their entries, the memory taken by others)
     if (!g_TwoViews)
     {
@@ -856,8 +1165,9 @@ void BeforeDraw()
 
 void AfterDraw()
 {
-    // The ping's place in the picture just drawn (the first player's view 0, the second's 1)
+    // The ping's place in the picture just drawn (the first player's view 0, the second's 1), and the minimap's dots
     ProjectPing(g_Lent ? 1 : 0);
+    ProjectMinimap(g_Lent ? 1 : 0);
     if (!g_Lent)
     {
         return;

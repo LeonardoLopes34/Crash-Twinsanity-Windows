@@ -111,6 +111,8 @@ struct Gl
     void (*CopyTexImage2D)(GLenum, GLint, GLenum, GLint, GLint, GLsizei, GLsizei, GLint);
     void (*CopyTexSubImage2D)(GLenum, GLint, GLint, GLint, GLint, GLint, GLsizei, GLsizei);
     void (*Scissor)(GLint, GLint, GLsizei, GLsizei);
+    // The minimap's dots
+    void (*Uniform4fv)(GLint, GLsizei, const GLfloat*);
     // The render thread's pictures: their fences
     void (*Flush)();
     GLsync (*FenceSync)(GLenum, GLbitfield);
@@ -245,6 +247,90 @@ void main()
 
 // The ping (two players: coop/secondplayer.cpp): a pulsing ring, a dot and a beam over the spot; at the picture's edge (out of view)
 // a small ring only. uvRect covers the picture; spot is where, in -1 to 1 each way; aspect the picture's width over height
+// The minimap (two players: coop/secondplayer.cpp): a circle over a square quad, a dark disc with rings and a rim, the dots (x and
+// y on the circle, z the kind) and the arrow of the player's facing
+constexpr const char* MinimapSource = R"(#version 330 core
+in vec2 place;
+out vec4 colour;
+uniform vec4 dots[96];
+uniform int count;
+uniform float facing;
+uniform float pulse;
+void main()
+{
+    vec2 p = vec2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0);
+    float r = length(p);
+    if (r > 1.0)
+    {
+        discard;
+    }
+
+    vec4 col = vec4(0.03, 0.06, 0.09, 0.64);
+    float rings = max(1.0 - smoothstep(0.0, 0.014, abs(r - 0.5)), 1.0 - smoothstep(0.0, 0.014, abs(r - 0.0)) * 0.0);
+    float cross = max(1.0 - smoothstep(0.0, 0.010, abs(p.x)), 1.0 - smoothstep(0.0, 0.010, abs(p.y)));
+    col.rgb += vec3(0.11) * max(rings, cross * 0.6);
+    float rim = smoothstep(0.92, 0.95, r);
+    col = mix(col, vec4(1.0, 0.72, 0.12, 1.0), rim);
+    for (int i = 0; i < count; i++)
+    {
+        vec4 d = dots[i];
+        vec2 q = p - d.xy;
+        int kind = int(d.z + 0.5);
+        float size = 0.03;
+        vec3 tint = vec3(1.0);
+        float shape = 0.0;
+        if (kind == 1)
+        {
+            size = 0.050;
+            tint = vec3(0.95, 0.18, 0.15);
+            shape = 1.0 - smoothstep(size * 0.7, size, length(q));
+        }
+        else if (kind == 2)
+        {
+            size = 0.036;
+            tint = vec3(0.72, 0.45, 0.18);
+            shape = 1.0 - smoothstep(size * 0.8, size, max(abs(q.x), abs(q.y)));
+        }
+        else if (kind == 3)
+        {
+            size = 0.024;
+            tint = vec3(1.0, 0.86, 0.15);
+            shape = 1.0 - smoothstep(size * 0.6, size, length(q));
+        }
+        else if (kind == 4)
+        {
+            size = 0.050;
+            tint = vec3(0.25, 0.85, 0.95);
+            shape = 1.0 - smoothstep(size * 0.7, size, length(q));
+        }
+        else if (kind == 5)
+        {
+            size = 0.075;
+            float outline = 1.0 - smoothstep(size * 0.85, size, length(q));
+            col = mix(col, vec4(1.0, 1.0, 1.0, 1.0), outline);
+            tint = vec3(0.15, 0.85, 0.25);
+            shape = 1.0 - smoothstep(size * 0.55, size * 0.7, length(q));
+        }
+        else if (kind == 6)
+        {
+            size = mix(0.07, 0.10, pulse);
+            tint = vec3(1.0, 0.8, 0.12);
+            shape = 1.0 - smoothstep(0.014, 0.03, abs(length(q) - size));
+        }
+
+        col = mix(col, vec4(tint, 1.0), shape);
+    }
+
+    // The player's own arrow, in the middle, turned the way it faces
+    float c = cos(facing);
+    float s = sin(facing);
+    vec2 local = vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+    float arrow = step(-0.06, local.y) * step(local.y, 0.10) * step(abs(local.x), (0.10 - local.y) * 0.55);
+    col = mix(col, vec4(1.0, 0.55, 0.05, 1.0), arrow);
+    colour = col;
+}
+)";
+
 constexpr const char* PingSource = R"(#version 330 core
 in vec2 place;
 out vec4 colour;
@@ -690,6 +776,44 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
             gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             gl.Viewport(p.viewX, p.viewY, p.viewWidth, p.viewHeight);
             gl.BindTexture(GL_TEXTURE_2D, texture);
+        }
+    }
+
+    // The minimap in the picture's top right corner (two players)
+    {
+        const float* dots = nullptr;
+        int dotCount = 0;
+        f32 facing = 0.0f;
+        int miniView = target != p.window && Coop::TwoViews() ? 1 : 0;
+        if (Coop::MinimapDots(miniView, &dots, &dotCount, &facing) && p.viewHeight > 0)
+        {
+            static GLuint miniProgram = 0;
+            if (miniProgram == 0)
+            {
+                GLuint vertex = Compile(gl, GL_VERTEX_SHADER, VertexSource);
+                GLuint fragment = Compile(gl, GL_FRAGMENT_SHADER, MinimapSource);
+                miniProgram = gl.CreateProgram();
+                gl.AttachShader(miniProgram, vertex);
+                gl.AttachShader(miniProgram, fragment);
+                gl.LinkProgram(miniProgram);
+            }
+
+            static const auto miniStarted = std::chrono::steady_clock::now();
+            f32 miniSeconds = std::chrono::duration<f32>(std::chrono::steady_clock::now() - miniStarted).count();
+            const s32 size = p.viewHeight * 28 / 100;
+            const s32 margin = std::max(8, p.viewWidth / 60);
+            gl.Viewport(p.viewX + p.viewWidth - size - margin, p.viewY + p.viewHeight - size - margin, size, size);
+            gl.Enable(0x0BE2);
+            gl.BlendFunc(0x0302, 0x0303);
+            gl.UseProgram(miniProgram);
+            gl.Uniform4f(gl.GetUniformLocation(miniProgram, "uvRect"), 0.0f, 0.0f, 1.0f, 1.0f);
+            gl.Uniform4fv(gl.GetUniformLocation(miniProgram, "dots[0]"), dotCount > 0 ? dotCount : 1, dots);
+            gl.Uniform1i(gl.GetUniformLocation(miniProgram, "count"), dotCount);
+            gl.Uniform1f(gl.GetUniformLocation(miniProgram, "facing"), facing);
+            gl.Uniform1f(gl.GetUniformLocation(miniProgram, "pulse"), 0.5f + 0.5f * std::sin(miniSeconds * 5.0f));
+            gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            gl.Disable(0x0BE2);
+            gl.Viewport(p.viewX, p.viewY, p.viewWidth, p.viewHeight);
         }
     }
 
@@ -1192,6 +1316,7 @@ void NativeGraphicsAttachWindow(SDL_Window* window)
     Load(gl.CopyTexImage2D, "glCopyTexImage2D");
     Load(gl.CopyTexSubImage2D, "glCopyTexSubImage2D");
     Load(gl.Scissor, "glScissor");
+    Load(gl.Uniform4fv, "glUniform4fv");
     Load(gl.ColorMask, "glColorMask");
     Load(gl.Uniform4f, "glUniform4f");
     Load(gl.Flush, "glFlush");
