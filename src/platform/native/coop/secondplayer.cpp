@@ -1286,6 +1286,13 @@ void PutAt(InstanceContext* instance, const Vector4& to)
     }
 }
 
+// A player's own gamepad in the game (pad 0 the first's, the second port's the second's)
+GamePad* OwnPad(int player)
+{
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    return pads == nullptr ? nullptr : (player == 0 ? pads->pads[0] : pads->pads[1]);
+}
+
 void StartRide(int rider)
 {
     InstanceContext* instance = PlayerOf(rider);
@@ -1325,18 +1332,22 @@ void EndRide()
         CharacterAgent* agent = AgentOf(instance);
         if (controls != nullptr && controls->pad == nullptr)
         {
-            controls->pad = g_Ride.pad;
+            // (Its own pad when it had none as it got in: a cutscene's commands take a player's pad away, and giving that back left
+            // the player unable to move once out of the backpack)
+            controls->pad = g_Ride.pad != nullptr ? g_Ride.pad : OwnPad(g_Ride.rider);
         }
 
         if (agent != nullptr)
         {
             agent->eventFlags.eventsOff = 0;
+            agent->buttons.locked.value = 0;
         }
 
         instance->flags.collisionActive = g_Ride.collision;
-        // Out beside the carrier (a little above: never under the ground)
+        // Out beside the carrier (a little above: never under the ground); not when it's in another area of the map (its numbers
+        // are that area's: put there, it landed anywhere)
         InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
-        if (carrier != nullptr && carrier->place != nullptr)
+        if (carrier != nullptr && carrier->place != nullptr && carrier->chunk == instance->chunk)
         {
             carrier->place->SyncPosition();
             Vector4 to = carrier->place->position;
@@ -1373,6 +1384,22 @@ bool BackpackPressed(int player)
 
     bool pressed = down && !was[player];
     was[player] = down;
+    // Not in the first moments of play: a button held through a cutscene (to skip it; the menus' and cutscenes' pad has both
+    // players' buttons in it) would count as a press the moment play came back, and a player ended up in the other's backpack
+    static u64 lastCall = 0;
+    static int steady = 0;
+    u64 now = SDL_GetTicksNS();
+    if (player == 0)
+    {
+        steady = now - lastCall > 200000000ull ? 0 : steady + 1;
+        lastCall = now;
+    }
+
+    if (steady < 30)
+    {
+        pressed = false;
+    }
+
     if (pressed)
     {
         Native::Log("second player: the backpack button pressed by player %d", player + 1);
@@ -1389,6 +1416,31 @@ constexpr float WarnAt = 220.0f;
 constexpr float LimitAt = 300.0f;
 float g_Leash = 0.0f;
 
+// The second player let go and made again (in the first player's area and backpack): when it ended up in another area of the map
+// than the first for good (the area's numbers aren't the first's: nothing between them says how far apart they are)
+void RetireSecond(const char* why)
+{
+    Native::Log("second player: made again (%s)", why);
+    EndRide();
+    InstanceContext* old = g_Second.instance;
+    if (old != nullptr && InstanceLive(old))
+    {
+        old->flags.visible = 0;
+        old->flags.collisionActive = 0;
+        if (ControlsNode* controls = ControlsOf(old))
+        {
+            controls->pad = nullptr;
+        }
+
+        CallVirtual<u32>(old, old->vtable, ReferencedObject::SleepSlot);
+    }
+
+    g_Second = Second();
+}
+
+// Since when the two players have been in different areas of the map (0: they're in the same one)
+u64 g_ApartSince = 0;
+
 void LeashFrame()
 {
     g_Leash = 0.0f;
@@ -1398,6 +1450,29 @@ void LeashFrame()
     {
         return;
     }
+
+    // Another area of the map: no distance to measure (its numbers are that area's own). A few seconds of it and the second player
+    // is made again beside the first; a moment of it is the walk across a door, which the game itself carries it through
+    if (first->chunk != second->chunk)
+    {
+        u64 now = SDL_GetTicksNS();
+        if (g_ApartSince == 0)
+        {
+            g_ApartSince = now;
+            Native::Log("second player: in another area than the first (%s and %s)",
+                        second->chunk != nullptr && second->chunk->name.string != nullptr ? second->chunk->name.string : "none",
+                        first->chunk != nullptr && first->chunk->name.string != nullptr ? first->chunk->name.string : "none");
+        }
+        else if (now - g_ApartSince > 4000000000ull)
+        {
+            g_ApartSince = 0;
+            RetireSecond("in another area for 4 seconds");
+        }
+
+        return;
+    }
+
+    g_ApartSince = 0;
 
     first->place->SyncPosition();
     second->place->SyncPosition();
@@ -1463,8 +1538,38 @@ void BackpackFrame()
         }
 
         InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
-        carrier->place->SyncPosition();
-        PutAt(g_Ride.instance, carrier->place->position);
+        if (carrier->chunk == g_Ride.instance->chunk)
+        {
+            g_ApartSince = 0;
+            carrier->place->SyncPosition();
+            PutAt(g_Ride.instance, carrier->place->position);
+        }
+        else
+        {
+            // The carrier crossed into another area: the rider's place can't be set from the carrier's numbers. Left a moment (the
+            // game carries characters across a door), then, the second player made again in the carrier's area; the first player,
+            // who can't be made again, let out of the backpack
+            u64 now = SDL_GetTicksNS();
+            if (g_ApartSince == 0)
+            {
+                g_ApartSince = now;
+            }
+            else if (now - g_ApartSince > 1000000000ull)
+            {
+                g_ApartSince = 0;
+                if (g_Ride.rider == 1)
+                {
+                    RetireSecond("the carrier is in another area");
+                }
+                else
+                {
+                    EndRide();
+                }
+
+                return;
+            }
+        }
+
         if (CharacterAgent* agent = AgentOf(g_Ride.instance))
         {
             agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -1545,6 +1650,12 @@ bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, Instanc
     if (thing == first || thing->place == nullptr || first->place == nullptr || second->place == nullptr)
     {
         return false;
+    }
+
+    // The players in different areas of the map: a thing follows the one in its own area (the areas' numbers can't be compared)
+    if (first->chunk != second->chunk)
+    {
+        return thing->chunk == second->chunk;
     }
 
     if (g_Follows.size() > 8192)
@@ -1646,7 +1757,7 @@ float SoundNearness(const Vector4* at, InstanceContext* listener)
 
     InstanceContext* ear = CameraOf(second);
     ear = ear != nullptr && ear->place != nullptr ? ear : second;
-    if (ear->place == nullptr)
+    if (ear->place == nullptr || ear->chunk != listener->chunk)
     {
         return 1.0f;
     }
@@ -1820,9 +1931,13 @@ struct CheckpointWait
     bool frozen[2] = {false, false};
     GamePad* pad[2] = {nullptr, nullptr};
     bool showing = false;
+    // A cutscene's wait (the two players near each other) rather than a checkpoint's (both near it)
+    bool cutscene = false;
 };
 CheckpointWait g_Wait;
 constexpr float CheckpointRange = 15.0f;
+// A cutscene starts once the players are this near each other (or one rides in the other's backpack)
+constexpr float CutsceneTogether = 30.0f;
 
 void Unfreeze(int player)
 {
@@ -1887,6 +2002,55 @@ bool CheckpointWaitHolds(InstanceContext* checkpoint)
     return true;
 }
 
+// A script body that starts a cutscene (coopgame.cpp's HoldsBody), the instance that runs it: true to hold it back until both
+// players are near each other, the player nearer the instance (who set it off) held still meanwhile; false once they are, with the
+// swap of "the player" undone so the cutscene's commands (locking the player's inputs, switching characters) act on the first
+// player as in a game with one
+bool CutsceneWaitHolds(InstanceContext* director)
+{
+    GameController* controller = G_GameController;
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = SecondPlayer();
+    if (!Wanted() || controller == nullptr || controller->State() != GameController::StatePlaying || first == nullptr ||
+        second == nullptr || first->place == nullptr || second->place == nullptr)
+    {
+        return false;
+    }
+
+    bool together = g_Ride.rider >= 0 ||
+                    (first->chunk == second->chunk && DistanceBetween(first->place, second->place) < CutsceneTogether);
+    if (together)
+    {
+        if (g_Wait.cutscene)
+        {
+            Native::Log("second player: cutscene, both players there");
+        }
+
+        EndWait();
+        EndObjectUpdate();
+        return false;
+    }
+
+    if (!g_Wait.cutscene)
+    {
+        EndWait();
+        g_Wait.cutscene = true;
+        // (A marker that there's a wait: the cutscene's place isn't used)
+        g_Wait.checkpoint = first;
+        Native::Log("second player: a cutscene waits for the other player");
+    }
+
+    g_Wait.asked = SDL_GetTicksNS();
+    int waiter = -1;
+    if (director != nullptr && director->place != nullptr)
+    {
+        waiter = DistanceBetween(director->place, first->place) <= DistanceBetween(director->place, second->place) ? 0 : 1;
+    }
+
+    g_Wait.waiter = waiter;
+    return true;
+}
+
 // Once a frame: the waiting player held still or let go, the line shown, the cancel buttons
 void CheckpointWaitFrame()
 {
@@ -1916,7 +2080,7 @@ void CheckpointWaitFrame()
     for (int player = 0; player < 2; player++)
     {
         InstanceContext* instance = player == 0 ? FirstPlayer() : SecondPlayer();
-        bool leaving = instance != nullptr && g_Wait.checkpoint->place != nullptr && instance->place != nullptr &&
+        bool leaving = !g_Wait.cutscene && instance != nullptr && g_Wait.checkpoint->place != nullptr && instance->place != nullptr &&
                        DistanceBetween(g_Wait.checkpoint->place, instance->place) > CheckpointRange + 4.0f;
         if (leaving)
         {
@@ -1956,7 +2120,15 @@ void CheckpointWaitFrame()
     }
 
     bool waiting = g_Wait.waiter >= 0 && !g_Wait.cancelled[g_Wait.waiter];
-    if (waiting)
+    if (g_Wait.cutscene)
+    {
+        // The cutscene's line shows for both (the other must come near or get into the backpack)
+        ShowBottomLine(waiting ? (g_Wait.waiter == 0 ? "Aguardando o outro jogador para a cutscene (X solta)"
+                                                     : "Aguardando o outro jogador para a cutscene (B solta)")
+                               : "Aguardando o outro jogador para a cutscene");
+        g_Wait.showing = true;
+    }
+    else if (waiting)
     {
         ShowBottomLine(g_Wait.waiter == 0 ? "Aguardando o outro jogador no checkpoint (X cancela)"
                                           : "Aguardando o outro jogador no checkpoint (B cancela)");
@@ -2022,9 +2194,45 @@ void SecondPlayerFrame()
     static int playingFrames = 0;
     // Out of play since it was there (a death's restart, a level's load): put beside the first player again once play is back, the
     // same character (made again only when it's gone: a second made each time stayed, a crowd of them after a few deaths)
+    // Why the game fades out and restarts (a death of either player, or something else): logged where each player is when it does
+    static u32 lastState = 99;
+    if (state == GameController::StateFadingOut && lastState != GameController::StateFadingOut)
+    {
+        InstanceContext* first = FirstPlayer();
+        InstanceContext* second = SecondPlayer();
+        CharacterAgent* firstAgent = AgentOf(first);
+        CharacterAgent* secondAgent = AgentOf(second);
+        auto where = [](InstanceContext* instance, float* x, float* y, float* z) -> const char*
+        {
+            if (instance == nullptr || instance->place == nullptr)
+            {
+                return "none";
+            }
+
+            instance->place->SyncPosition();
+            *x = instance->place->position.x;
+            *y = instance->place->position.y;
+            *z = instance->place->position.z;
+            return instance->chunk != nullptr && instance->chunk->name.string != nullptr ? instance->chunk->name.string : "?";
+        };
+        float fx = 0, fy = 0, fz = 0, sx = 0, sy = 0, sz = 0;
+        const char* firstChunk = where(first, &fx, &fy, &fz);
+        const char* secondChunk = where(second, &sx, &sy, &sz);
+        Native::Log("second player: the game fades out: first dead %d at (%.1f, %.1f, %.1f) in %s; second dead %d at (%.1f, %.1f, %.1f) in "
+                    "%s; ride %d",
+                    firstAgent != nullptr ? static_cast<int>(firstAgent->state.dead) : -1, fx, fy, fz, firstChunk,
+                    secondAgent != nullptr ? static_cast<int>(secondAgent->state.dead) : -1, sx, sy, sz, secondChunk, g_Ride.rider);
+    }
+
+    lastState = state;
     static bool returning = false;
-    // Whether it's a cutscene it comes back from (where it was is kept if that's near the first player: it needn't ride)
+    // Whether a cutscene played since play was last there (the states between it and play, a load among them, don't take that
+    // back): the second player comes back from it on foot, never into the backpack
     static bool fromCutscene = false;
+    // The second player held still, hidden and out of the way (no collision) while a cutscene plays: its pad and collision kept
+    static bool cutsceneHeld = false;
+    static GamePad* heldPad = nullptr;
+    static u32 heldCollision = 0;
     if (state != GameController::StatePlaying)
     {
         if (state == GameController::StateWatching && Valid())
@@ -2033,18 +2241,69 @@ void SecondPlayerFrame()
             returning = true;
             fromCutscene = true;
             playingFrames = 0;
+            ControlsNode* controls = ControlsOf(g_Second.instance);
+            if (!cutsceneHeld && controls != nullptr)
+            {
+                cutsceneHeld = true;
+                heldPad = controls->pad;
+                heldCollision = g_Second.instance->flags.collisionActive;
+                controls->pad = nullptr;
+                g_Second.instance->flags.collisionActive = 0;
+            }
+
+            if (CharacterAgent* agent = AgentOf(g_Second.instance))
+            {
+                agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+            }
         }
         else if (state != GameController::StateWatching && state != GameController::StatePaused &&
                  state != GameController::StateWaiting)
         {
             returning = true;
-            fromCutscene = false;
-            playingFrames = 0;
+            if (!fromCutscene)
+            {
+                playingFrames = 0;
+            }
+
             // (A death's restart, a level's load: both come back on foot)
             EndRide();
         }
 
         return;
+    }
+
+    // Play again after a cutscene: its pad and collision given back, its inputs unlocked (the cutscene's commands locked them while
+    // "the player" was whichever the world saw), and where it stood kept unless the first player was taken far (then beside it)
+    if (cutsceneHeld)
+    {
+        cutsceneHeld = false;
+        if (Valid())
+        {
+            ControlsNode* controls = ControlsOf(g_Second.instance);
+            if (controls != nullptr && controls->pad == nullptr)
+            {
+                controls->pad = heldPad;
+            }
+
+            g_Second.instance->flags.collisionActive = heldCollision;
+            if (CharacterAgent* agent = AgentOf(g_Second.instance))
+            {
+                agent->buttons.locked.value = 0;
+            }
+
+            InstanceContext* first = FirstPlayer();
+            if (first != nullptr && first->place != nullptr && g_Second.instance->place != nullptr &&
+                DistanceBetween(first->place, g_Second.instance->place) > 12.0f)
+            {
+                first->place->SyncPosition();
+                Vector4 to = first->place->position;
+                to.y += 0.3f;
+                PutAt(g_Second.instance, to);
+                Native::Log("second player: back from the cutscene, put on the first player's spot");
+            }
+        }
+
+        heldPad = nullptr;
     }
 
     if (returning && Valid())
@@ -2055,12 +2314,10 @@ void SecondPlayerFrame()
         // backpack (the cutscene took the first player far)
         returning = false;
         playingFrames = 0;
-        InstanceContext* first = FirstPlayer();
-        InstanceContext* second = g_Second.instance;
-        bool near = fromCutscene && first != nullptr && first->place != nullptr && second->place != nullptr &&
-                    DistanceBetween(first->place, second->place) < 40.0f;
+        // (After a cutscene: on foot, handled above)
+        bool after = fromCutscene;
         fromCutscene = false;
-        if (!near && g_Ride.rider < 0)
+        if (!after && g_Ride.rider < 0)
         {
             StartRide(1);
             Native::Log("second player: back in play, in the first player's backpack");
@@ -2137,10 +2394,26 @@ void SecondPlayerFrame()
     {
         playingFrames = 0;
         Make();
-        // Made: in the first player's backpack to start with (never in a wall); Select gets out
-        if (Valid() && g_Ride.rider < 0)
+        if (Valid())
         {
-            StartRide(1);
+            if (fromCutscene)
+            {
+                // Made again after a cutscene (a level loaded): on the first player's spot, not in the backpack
+                fromCutscene = false;
+                InstanceContext* first = FirstPlayer();
+                if (first != nullptr && first->place != nullptr && g_Second.instance->place != nullptr)
+                {
+                    first->place->SyncPosition();
+                    Vector4 to = first->place->position;
+                    to.y += 0.3f;
+                    PutAt(g_Second.instance, to);
+                }
+            }
+            else if (g_Ride.rider < 0)
+            {
+                // Made: in the first player's backpack to start with (never in a wall); Select gets out
+                StartRide(1);
+            }
         }
     }
 }

@@ -1897,6 +1897,16 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
             {
                 return CheckpointWaitHolds(runner->agentNode->owner);
             }
+
+            // A cutscene starting from play waits for both players
+            if (command->vtable == g_CutsceneStartCommandVTable)
+            {
+                GameController* controller = G_GameController;
+                if (controller != nullptr && controller->State() == GameController::StatePlaying)
+                {
+                    return CutsceneWaitHolds(runner->agentNode->owner);
+                }
+            }
         }
     }
 

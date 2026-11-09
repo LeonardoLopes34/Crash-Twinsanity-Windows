@@ -87,6 +87,9 @@ bool MinimapDots(int view, const float** dots, int* count, float* facing);
 // The checkpoint's wait for both players (coopgame.cpp's HoldsBody: a body setting a checkpoint, the checkpoint's instance): true to
 // hold it back while the other player isn't in its range. The game's bottom line of text (a short sentence, no accents; "" hides)
 bool CheckpointWaitHolds(InstanceContext* checkpoint);
+// The same for a body that starts a cutscene: held until both players are near each other (or one rides in the other's backpack);
+// released, the swap of "the player" is undone first so the cutscene acts on the first player
+bool CutsceneWaitHolds(InstanceContext* director);
 void ShowBottomLine(const char* text);
 bool RidingHides(const ModelNode* node);
 // The second player's character drawn green (ogi.cpp's ModelNode::Draw): whether a model is its, and a light's colour made green
