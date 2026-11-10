@@ -1521,6 +1521,12 @@ bool OnlineBackpackPadPressed()
 
     bool pressed = down && !was;
     was = down;
+    if (pressed)
+    {
+        Native::Log("coop: the backpack's button on the gamepad (%s)",
+                    (pad->now & (1u << PadSelect)) != 0 ? "Select" : "L1+R1");
+    }
+
     return pressed;
 }
 }
@@ -1560,10 +1566,13 @@ void GameFrame()
         lastRoundTripLog = now;
         PlayerState partner;
         bool have = g_Session.Partner(now, &partner);
-        Native::Log("coop: connected to %s, round trip %.0f ms, partner %s at (%.1f, %.1f, %.1f)%s",
-                    g_Session.PartnerName().c_str(), g_Session.RoundTrip() * 1000.0, have ? "seen" : "not seen yet",
-                    partner.position[0], partner.position[1], partner.position[2],
-                    partner.Has(PlayerState::Watching) ? " watching a cutscene" : "");
+        Native::Log("coop: connected to %s (%s), round trip %.0f ms, partner %s at (%.1f, %.1f, %.1f)%s; skins: mine %u, "
+                    "theirs %u; the puppet %s",
+                    g_Session.PartnerName().c_str(), g_Session.IsHost() ? "this game hosts" : "this game joined",
+                    g_Session.RoundTrip() * 1000.0, have ? "seen" : "not seen yet", partner.position[0], partner.position[1],
+                    partner.position[2], partner.Has(PlayerState::Watching) ? " watching a cutscene" : "",
+                    static_cast<unsigned>(g_Session.LocalSkin()), static_cast<unsigned>(g_Session.PartnerSkin()),
+                    PuppetValid() ? (g_Puppet.instance->flags.visible != 0 ? "shown" : "hidden") : "not made");
     }
 
     // F5 or Select (or L1+R1 on gamepad): the backpack in and out
@@ -2112,9 +2121,15 @@ bool ModelDrawn(ModelNode* node)
         const std::vector<uint8_t>* from = nullptr;
         const std::vector<uint8_t>* to = nullptr;
         float share = 0;
-        if (count != 0 && g_Session.PartnerPoses(Now(), &from, &to, &share))
+        bool posed = count != 0 && g_Session.PartnerPoses(Now(), &from, &to, &share) &&
+                     BlendPoses(*from, *to, share, node->drawnAnimator->matrices.start, count);
+        // (Why the puppet isn't posed as the partner, once each time it stops being: the joints' counts apart, or no pose yet)
+        static bool wasPosed = true;
+        if (posed != wasPosed)
         {
-            BlendPoses(*from, *to, share, node->drawnAnimator->matrices.start, count);
+            wasPosed = posed;
+            Native::Log("coop: the puppet %s (%u joints here, pose %zu bytes)", posed ? "posed as the partner again" : "not posed",
+                        static_cast<unsigned>(count), from != nullptr ? from->size() : static_cast<size_t>(0));
         }
     }
 

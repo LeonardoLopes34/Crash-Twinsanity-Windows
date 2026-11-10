@@ -12,7 +12,9 @@
 namespace Coop
 {
 constexpr uint32_t Magic = 0x4F435754; // "TWCO"
-constexpr uint16_t ProtocolVersion = 4;
+// (5: 2026-11-10, the partner's hits and ping, no swap to the puppet; a game of 4 and one of 5 don't play together, it's said on
+// the screen)
+constexpr uint16_t ProtocolVersion = 5;
 constexpr uint16_t DefaultPort = 27420;
 constexpr size_t MostPacket = 1200;
 

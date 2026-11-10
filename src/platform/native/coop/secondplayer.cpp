@@ -439,6 +439,7 @@ void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera
         // (The heading the game's camera had; the height ours)
         orbit.pitch = StartPitch;
         orbit.camera = camera;
+        Native::Log("camera: the third person camera for player %d%s", player + 1, Active() ? " (online co-op)" : "");
     }
 
     // The stick: right turns the view right (the heading toward the camera's right), up looks up. The stick's turn is a speed (a
@@ -1731,6 +1732,12 @@ bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, Instanc
 InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
 {
     InstanceContext* first = LocalPlayer() != nullptr ? LocalPlayer() : played;
+    // Online co-op: each PC runs its own player's world (the partner's game runs the partner's); the puppet is only drawn
+    if (Active())
+    {
+        return first != nullptr ? first : played;
+    }
+
     InstanceContext* second = g_SecondModel != nullptr ? SecondPlayer() : nullptr;
     if (from == nullptr || first == nullptr || second == nullptr || from->place == nullptr || first->place == nullptr ||
         second->place == nullptr || from->chunk == nullptr)
@@ -1765,12 +1772,9 @@ CharacterPart* g_SecondPart = nullptr;
 void KeepSecondRef()
 {
     InstanceContext* second = SecondPlayer();
+    // (Online the partner is a puppet with no character of its own: it never borrows this player's, or whatever the world did to
+    // "the player" near the puppet, a worm's launch, was done to this player far away)
     auto* node = second != nullptr ? static_cast<PlayerNode*>(GetGameNode(&second->nodes, NodeCharacter)) : nullptr;
-    if (node == nullptr && Active() && second != nullptr)
-    {
-        InstanceContext* first = FirstPlayer();
-        node = first != nullptr ? static_cast<PlayerNode*>(GetGameNode(&first->nodes, NodeCharacter)) : nullptr;
-    }
 
     g_SecondCharacter = node != nullptr ? node->character : nullptr;
     g_SecondPart = g_SecondCharacter != nullptr ? static_cast<CharacterPart*>(g_SecondCharacter->part) : nullptr;
@@ -1877,10 +1881,11 @@ void BeginObjectUpdate(InstanceContext* owner)
         return;
     }
 
-    // In online co-op each PC collects its own pickups and runs its own camera/controls; world objects, enemies, bosses and
-    // triggers swap to whichever player is nearer
-    if (Active() &&
-        (owner->nodes.mask & ((1u << NodePickup) | (1u << NodeCameraLens) | (1u << NodeFollow) | (1u << NodeControls))) != 0)
+    // Online co-op: no swap to the partner's puppet. It has no character, no physics and no scripts, so whatever the world does to
+    // "the player" while swapped (a worm's launch, a hit, the animation's controllers, the camera's rig) landed on this PC's own
+    // player: the worm launched the player far away, the puppet copied this player's spin, the joining player's camera followed
+    // the host. Each PC's world sees its own player; the partner's attacks, pickups, checkpoints and cutscenes come over the network
+    if (Active())
     {
         return;
     }
@@ -1935,11 +1940,6 @@ void BeginObjectUpdate(InstanceContext* owner)
         g_PlayerPart2 = g_SecondPart;
     }
 
-    if (Active() && (second->nodes.mask & (1u << NodeCharacter)) == 0 && second->nodes.nodes[NodeCharacter] == nullptr)
-    {
-        second->nodes.nodes[NodeCharacter] = first->nodes.nodes[NodeCharacter];
-    }
-
     g_Swapped = true;
 }
 
@@ -1951,11 +1951,6 @@ void EndObjectUpdate()
     }
 
     g_Swapped = false;
-    if (Active() && g_SecondRefFor != nullptr && InstanceLive(g_SecondRefFor) &&
-        (g_SecondRefFor->nodes.mask & (1u << NodeCharacter)) == 0)
-    {
-        g_SecondRefFor->nodes.nodes[NodeCharacter] = nullptr;
-    }
 
     // (Given back unless the step itself changed them: then the game's own change stands)
     if (g_PlayerInstance == g_SecondRef)
@@ -1988,7 +1983,7 @@ InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
     }
 
     InstanceContext* first = LocalPlayer() != nullptr ? LocalPlayer() : player;
-    if (asking == first)
+    if (asking == first || Active())
     {
         return first;
     }
