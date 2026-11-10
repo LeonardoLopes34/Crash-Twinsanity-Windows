@@ -2159,6 +2159,46 @@ bool CutsceneWaitHolds(InstanceContext* director)
         return false;
     }
 
+    // (2026-11-10, the players' ask: no more waiting. The wait held the player who set it off still, its pad taken, and a cutscene
+    // set off by the second player, while the world took it for "the player", acted on the wrong one: both left where the first
+    // stood, unable to move, the first player's pad on the second's character after Tikimon. Now a cutscene always starts at once,
+    // as in a game with one player: the swap undone (it acts on the first player), the first player put where the second set it
+    // off, and the second carried in the first's backpack through it; out beside the first a moment after play comes back)
+    {
+        bool bySecond = SwappedToSecond();
+        EndWait();
+        EndObjectUpdate();
+        g_CutsceneForce = false;
+        first = FirstPlayer();
+        second = SecondPlayer();
+        if (first == nullptr || second == nullptr || first->place == nullptr || second->place == nullptr)
+        {
+            return false;
+        }
+
+        if (g_Ride.rider == 0)
+        {
+            // The first rode in the second's backpack: out on the second's spot (where the cutscene was set off)
+            EndRide();
+        }
+        else if (bySecond && g_Ride.rider < 0 && first->chunk == second->chunk)
+        {
+            second->place->SyncPosition();
+            Vector4 to = second->place->position;
+            to.y += 0.3f;
+            PutAt(first, to);
+        }
+
+        if (g_Ride.rider < 0 && first->chunk == second->chunk)
+        {
+            StartRide(1);
+        }
+
+        Native::Log("second player: a cutscene starts%s; player 2 %s", bySecond ? " (set off by player 2: player 1 put there)" : "",
+                    g_Ride.rider == 1 ? "in player 1's backpack" : "held (another area of the map)");
+        return false;
+    }
+
     bool together = g_Ride.rider >= 0 || g_CutsceneForce ||
                     (first->chunk == second->chunk && DistanceBetween(first->place, second->place) < CutsceneTogether);
     if (together)
@@ -2348,6 +2388,65 @@ bool RidingHidesShadow(const InstanceContext* instance)
     return InCutscene() && instance == SecondPlayer();
 }
 
+namespace
+{
+// When the second player comes out of the first's backpack after a cutscene (0: not waiting to)
+u64 g_OutAfterCutscene = 0;
+
+// Once a frame of play: each player's pad on its own character, and "the player" the first's out of the world's steps. After
+// Tikimon's fight the first player's pad was on the second's character and the first stood still: whatever moved them, it's put
+// back here (and logged)
+void KeepPlayersApart()
+{
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = Valid() ? g_Second.instance : nullptr;
+    if (first == nullptr || second == nullptr)
+    {
+        return;
+    }
+
+    GameController* controller = G_GameController;
+    if (!g_Swapped && controller != nullptr && first == second)
+    {
+        GameProgress& progress = controller->progress;
+        u32 slot = progress.play.character;
+        Reference* played = slot < GameProgress::Characters ? progress.characters[slot] : nullptr;
+        if (played != nullptr && played->object != nullptr && played->object != second)
+        {
+            g_PlayerInstance = played;
+            first = static_cast<InstanceContext*>(played->object);
+            Native::Log("second player: \"the player\" was the second player out of the world's steps: given back to the first");
+        }
+    }
+
+    auto* firstNode = static_cast<PlayerNode*>(GetGameNode(&first->nodes, NodeCharacter));
+    auto* secondNode = static_cast<PlayerNode*>(GetGameNode(&second->nodes, NodeCharacter));
+    if (!g_Swapped && firstNode != nullptr && secondNode != nullptr && secondNode->character != nullptr &&
+        g_PlayerCharacter == secondNode->character && firstNode->character != nullptr)
+    {
+        g_PlayerCharacter = firstNode->character;
+        g_PlayerPart = static_cast<CharacterPart*>(firstNode->character->part);
+        Native::Log("second player: the game's player character was the second's out of the world's steps: given back to the first");
+    }
+
+    ControlsNode* firstControls = ControlsOf(first);
+    ControlsNode* secondControls = ControlsOf(second);
+    GamePad* firstPad = OwnPad(0);
+    GamePad* secondPad = OwnPad(1);
+    if (secondControls != nullptr && firstPad != nullptr && secondControls->pad == firstPad && firstPad != secondPad)
+    {
+        secondControls->pad = g_Ride.rider == 1 ? nullptr : secondPad;
+        Native::Log("second player: the second's character had the first player's pad: given its own");
+    }
+
+    if (firstControls != nullptr && secondPad != nullptr && firstControls->pad == secondPad && firstPad != secondPad)
+    {
+        firstControls->pad = g_Ride.rider == 0 ? nullptr : firstPad;
+        Native::Log("second player: the first's character had the second player's pad: given its own");
+    }
+}
+}
+
 void SecondPlayerFrame()
 {
     if (!Wanted())
@@ -2426,12 +2525,23 @@ void SecondPlayerFrame()
     {
         if (state == GameController::StateWatching && Valid())
         {
-            EndRide();
+            // In the first player's backpack through the cutscene (the first riding in the second's: out first); held still and
+            // out of the way below when it can't ride (another area of the map)
+            if (g_Ride.rider == 0)
+            {
+                EndRide();
+            }
+
+            if (g_Ride.rider < 0 && FirstPlayer() != nullptr && FirstPlayer()->chunk == g_Second.instance->chunk)
+            {
+                StartRide(1);
+            }
+
             returning = true;
             fromCutscene = true;
             playingFrames = 0;
             ControlsNode* controls = ControlsOf(g_Second.instance);
-            if (!cutsceneHeld && controls != nullptr)
+            if (g_Ride.rider != 1 && !cutsceneHeld && controls != nullptr)
             {
                 cutsceneHeld = true;
                 heldPad = controls->pad;
@@ -2541,6 +2651,12 @@ void SecondPlayerFrame()
             StartRide(1);
             Native::Log("second player: back in play, in the first player's backpack");
         }
+
+        if (after && g_Ride.rider == 1)
+        {
+            // Out beside the first player a second into play (the cutscene's own moves of the first done by then)
+            g_OutAfterCutscene = SDL_GetTicksNS() + 1000000000ull;
+        }
     }
     else if (returning)
     {
@@ -2604,6 +2720,17 @@ void SecondPlayerFrame()
             return;
         }
 
+        if (g_OutAfterCutscene != 0 && SDL_GetTicksNS() >= g_OutAfterCutscene)
+        {
+            g_OutAfterCutscene = 0;
+            if (g_Ride.rider == 1)
+            {
+                EndRide();
+                Native::Log("second player: out of the backpack beside player 1 after the cutscene");
+            }
+        }
+
+        KeepPlayersApart();
         BackpackFrame();
         return;
     }
