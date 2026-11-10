@@ -25,11 +25,14 @@ SDL_VERSION = "3.4.18"
 SDL_URL = f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VERSION}/SDL3-devel-{SDL_VERSION}-mingw.tar.gz"
 FFMPEG_NAME = "ffmpeg-n9.0-latest-win64-lgpl-shared-9.0"
 FFMPEG_URL = f"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/{FFMPEG_NAME}.zip"
+LLVM_MINGW_VERSION = "20250305"
+LLVM_MINGW_NAME = f"llvm-mingw-{LLVM_MINGW_VERSION}-ucrt-x86_64"
+LLVM_MINGW_URL = f"https://github.com/mstorsjo/llvm-mingw/releases/download/{LLVM_MINGW_VERSION}/{LLVM_MINGW_NAME}.zip"
 MSYS2_REPO = "https://repo.msys2.org/msys/x86_64/"
 
 
 def find_llvm_mingw():
-    """LLVM-MinGW's bin folder: on the PATH, $LLVM_MINGW, or where winget puts it"""
+    """LLVM-MinGW's bin folder: on the PATH, $LLVM_MINGW, where winget puts it, or fetched into build/native/deps"""
     if os.environ.get("LLVM_MINGW"):
         return Path(os.environ["LLVM_MINGW"]) / "bin"
     found = shutil.which("x86_64-w64-mingw32-clang++")
@@ -38,7 +41,13 @@ def find_llvm_mingw():
     packages = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
     for candidate in sorted(glob.glob(str(packages / "MartinStorsjo.LLVM-MinGW.UCRT_*" / "llvm-mingw-*" / "bin")), reverse=True):
         return Path(candidate)
-    return None
+    for candidate in sorted(glob.glob(str(DEPS / "llvm-mingw-*" / "bin")), reverse=True):
+        return Path(candidate)
+    archive = DEPS / f"{LLVM_MINGW_NAME}.zip"
+    download(LLVM_MINGW_URL, archive)
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(DEPS)
+    return DEPS / LLVM_MINGW_NAME / "bin"
 
 
 def configured_compiler():
@@ -55,8 +64,10 @@ def find_tool(name, winget_id):
     found = shutil.which(name)
     if found:
         return found
-    for candidate in (Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "CMake" / "bin" / f"{name}.exe",
-                      Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links" / f"{name}.exe"):
+    vs_base = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio"
+    vs_candidates = [Path(p) for p in sorted(glob.glob(str(vs_base / "*" / "*" / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "**" / f"{name}.exe"), recursive=True), reverse=True)]
+    for candidate in [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "CMake" / "bin" / f"{name}.exe",
+                      Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links" / f"{name}.exe"] + vs_candidates:
         if candidate.exists():
             return str(candidate)
     if name == "ninja":
@@ -135,6 +146,8 @@ def fetch_dependencies(llvm):
         download(SDL_URL, archive)
         with tarfile.open(archive) as tar:
             tar.extractall(DEPS, filter="data")
+    if (DEPS / FFMPEG_NAME).exists():
+        return sdl, DEPS / FFMPEG_NAME
     ffmpeg = own_ffmpeg(llvm)
     if ffmpeg is not None:
         return sdl, ffmpeg

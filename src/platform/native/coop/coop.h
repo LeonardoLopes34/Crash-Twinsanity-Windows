@@ -19,6 +19,25 @@ void GameFrame();
 
 // Whether online co-op is on (asked for, whether or not the partner is there)
 bool Active();
+// The local player's own character on this PC (even while g_PlayerInstance is swapped to the second player/partner)
+InstanceContext* LocalPlayer();
+// The online partner's character on this PC (none while not in play)
+InstanceContext* NetworkPartner();
+// Whether g_PlayerInstance is currently swapped to the second player/partner during BeginObjectUpdate
+bool SwappedToSecond();
+// Online session queries used by shared co-op features
+bool IsHost();
+int LocalSkin();
+int PartnerSkin();
+bool InPartnerBackpack();
+bool PartnerInMyBackpack();
+// Whether an object should keep stepping even when outside the local camera's sight (near the partner or attacked by them)
+bool ShouldStepObject(const InstanceContext* instance);
+bool IsReplayedObject(const InstanceContext* instance);
+// 3D ping spot shared between the two PCs
+void SendPingSpot(float x, float y, float z);
+void ReceivePingSpot(float x, float y, float z);
+float OnlineLeashWarning();
 
 // The second player on this PC (coop/secondplayer.cpp; coop.ini's players=2 or $TWIN_PLAYERS=2): a second character of its own,
 // played with the second gamepad (the pads' port 1). Once a frame from the pads' read; and while it's made (instancefactory.cpp's

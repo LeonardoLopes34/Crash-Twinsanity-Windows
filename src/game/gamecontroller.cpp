@@ -1125,7 +1125,7 @@ u32 GameController::RestartFromCheckpoint()
     // Two players on this PC: no game over from dying. With the lives out the game reloaded the whole level from its start (the
     // Mecha Bandicoot fight began at the top of the arena, not at its cave, and the fight's scripts were left half done): the
     // lives filled up and the restart goes to the last checkpoint instead
-    if (progress.counts.lives == 0 && Coop::SecondPlayerWanted())
+    if (progress.counts.lives == 0 && (Coop::SecondPlayerWanted() || Coop::Active()))
     {
         progress.counts.lives = 3;
         Native::Log("second player: the lives were out, filled up (no game over with two players)");

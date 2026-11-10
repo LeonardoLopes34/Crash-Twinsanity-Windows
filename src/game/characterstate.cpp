@@ -592,7 +592,7 @@ u32 CharacterAgent::Link(CharacterAgent* other)
 #ifdef TWIN_NATIVE
     // Two players: a character tied to one can't be taken by the other (Cortex held by one player went to both when the other
     // came by): refused while either is tied to someone else; tied to each other already, or free, it goes on
-    if (Coop::SecondPlayerWanted())
+    if (Coop::SecondPlayerWanted() || Coop::Active())
     {
         auto partnerOf = [](CharacterAgent* character) -> InstanceContext*
         {

@@ -85,6 +85,8 @@ void Session::Stop()
     latest = PlayerState();
     inBackpack = false;
     holdKey = partnerHoldKey = goKey = releasedKey = 0;
+    hitReceived = false;
+    pingReceived = false;
 }
 
 void Session::Notify(const std::string& text, double seconds)
@@ -146,6 +148,8 @@ void Session::Disconnect(const std::string& why)
     pauseAsked = false;
     resumeAsked = true;
     diedTold = false;
+    hitReceived = false;
+    pingReceived = false;
     // Alone again: out of the backpack, and a held cutscene goes on solo
     if (inBackpack)
     {
@@ -558,6 +562,38 @@ void Session::HandleEvent(const uint8_t* data, size_t size, double at)
         return;
     }
 
+    if (kind == EventKind::PlayerHit)
+    {
+        uint8_t attackKind = reader.U8();
+        float dx = reader.F32();
+        float dz = reader.F32();
+        if (reader.Ok())
+        {
+            hitReceived = true;
+            hitAttackKind = attackKind;
+            hitDx = dx;
+            hitDz = dz;
+        }
+
+        return;
+    }
+
+    if (kind == EventKind::PingSpot)
+    {
+        float x = reader.F32();
+        float y = reader.F32();
+        float z = reader.F32();
+        if (reader.Ok())
+        {
+            pingReceived = true;
+            pingSpot[0] = x;
+            pingSpot[1] = y;
+            pingSpot[2] = z;
+        }
+
+        return;
+    }
+
     uint32_t a = reader.U32();
     uint32_t b = reader.U32();
     uint32_t c = reader.U32();
@@ -938,4 +974,88 @@ bool Session::PopWorld(WorldEvent* event)
 }
 
 void Session::SendText(const std::string& text) { SendEventText(EventKind::Text, text); }
+
+void Session::SendPlayerHit(uint8_t attackKind, float dx, float dz)
+{
+    if (link != Link::Connected)
+    {
+        return;
+    }
+
+    std::vector<uint8_t> message;
+    Writer writer(&message);
+    writer.U8(static_cast<uint8_t>(EventKind::PlayerHit));
+    writer.U8(attackKind);
+    writer.F32(dx);
+    writer.F32(dz);
+    channel.Queue(message);
+}
+
+bool Session::TakePlayerHit(uint8_t* attackKind, float* dx, float* dz)
+{
+    if (!hitReceived)
+    {
+        return false;
+    }
+
+    hitReceived = false;
+    if (attackKind != nullptr)
+    {
+        *attackKind = hitAttackKind;
+    }
+
+    if (dx != nullptr)
+    {
+        *dx = hitDx;
+    }
+
+    if (dz != nullptr)
+    {
+        *dz = hitDz;
+    }
+
+    return true;
+}
+
+void Session::SendPingSpot(float x, float y, float z)
+{
+    if (link != Link::Connected)
+    {
+        return;
+    }
+
+    std::vector<uint8_t> message;
+    Writer writer(&message);
+    writer.U8(static_cast<uint8_t>(EventKind::PingSpot));
+    writer.F32(x);
+    writer.F32(y);
+    writer.F32(z);
+    channel.Queue(message);
+}
+
+bool Session::TakePingSpot(float* x, float* y, float* z)
+{
+    if (!pingReceived)
+    {
+        return false;
+    }
+
+    pingReceived = false;
+    if (x != nullptr)
+    {
+        *x = pingSpot[0];
+    }
+
+    if (y != nullptr)
+    {
+        *y = pingSpot[1];
+    }
+
+    if (z != nullptr)
+    {
+        *z = pingSpot[2];
+    }
+
+    return true;
+}
 }

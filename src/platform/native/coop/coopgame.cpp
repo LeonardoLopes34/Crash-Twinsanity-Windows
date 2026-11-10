@@ -19,20 +19,24 @@
 #include "game/characters.h"
 #include "game/collision.h"
 #include "game/oleg.h"
-#include "game/scenery.h"
 #include "game/behaviours.h"
 #include "game/memory.h"
 #include "game/resources.h"
 #include "game/chunkdata.h"
+#include "game/chunkloading.h"
 #include "game/commands.h"
 #include "game/controllers.h"
+#include "game/followcamera.h"
 #include "game/gamecontroller.h"
+#include "game/instancefactory.h"
 #include "game/instances.h"
 #include "game/objectnode.h"
 #include "game/objects.h"
+#include "game/pads.h"
 #include "game/place.h"
 #include "game/player.h"
 #include "game/reference.h"
+#include "game/scenery.h"
 
 #include <SDL3/SDL.h>
 
@@ -169,6 +173,12 @@ std::string RetryStart(double now)
 
 InstanceContext* PlayerInstance()
 {
+    InstanceContext* local = LocalPlayer();
+    if (local != nullptr)
+    {
+        return local;
+    }
+
     return g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
 }
 
@@ -313,8 +323,9 @@ void PutPlayerAt(float x, float y, float z)
     }
 }
 
-// The partner drawn in this game: an instance of the partner's model alone (no object node, no physics, no scripts), as the
-// cutscenes make theirs, placed where the partner is and posed as the partner's character is (ModelDrawn)
+// The partner in this game: an instance in the local player's chunk with a ModelNode of the partner's model (the local player's
+// own Crash model at first, then the partner's character by its OGI signature), its collision box attached so the chunk's scenery
+// draws it when it's in view, and its joints written from the network pose as it's drawn (ModelDrawn)
 struct Puppet
 {
     InstanceContext* instance = nullptr;
@@ -337,16 +348,27 @@ void HidePuppet()
     if (PuppetValid())
     {
         g_Puppet.instance->flags.visible = 0;
+        g_Puppet.instance->flags.collisionActive = 0;
     }
 }
 
-// The puppet left to its chunk (hidden; the chunk frees it) and made again when play comes back: a level load, a death, a
-// checkpoint's restart can each free or move what it was made in
+// The puppet left to its chunk (its model node detached and put to sleep; the chunk frees it) and made again when play comes back:
+// a level load, a death, a checkpoint's restart can each free or move what it was made in
 void ForgetPuppet()
 {
     if (g_Puppet.instance != nullptr)
     {
         HidePuppet();
+        if (PuppetValid())
+        {
+            if (g_Puppet.node != nullptr)
+            {
+                UnregisterNode(g_Puppet.instance, 1, g_Puppet.node);
+            }
+
+            CallVirtual<u32>(g_Puppet.instance, g_Puppet.instance->vtable, ReferencedObject::SleepSlot);
+        }
+
         g_Puppet = Puppet();
     }
 }
@@ -369,6 +391,12 @@ InstanceContext* MakePuppet(ChunkData* chunk, GameOGI* ogi)
 // load); hidden otherwise
 void UpdatePuppet(double now, const PlayerState& local)
 {
+    float pingX = 0, pingY = 0, pingZ = 0;
+    if (g_Session.TakePingSpot(&pingX, &pingY, &pingZ))
+    {
+        ReceivePingSpot(pingX, pingY, pingZ);
+    }
+
     GameController* controller = G_GameController;
     u32 state = controller != nullptr ? controller->State() : GameController::NoState;
     // Out of play here (loading, dying, restarting, a menu): forgotten, made again once play is back
@@ -379,6 +407,21 @@ void UpdatePuppet(double now, const PlayerState& local)
     }
 
     InstanceContext* player = PlayerInstance();
+    auto* localPlayerNode = player != nullptr ? static_cast<PlayerNode*>(GetGameNode(&player->nodes, NodeCharacter)) : nullptr;
+    PlayerCharacter* localAgent = localPlayerNode != nullptr ? localPlayerNode->character : nullptr;
+    uint8_t hitKind = 0;
+    float hitDx = 0, hitDz = 0;
+    if (g_Session.TakePlayerHit(&hitKind, &hitDx, &hitDz) && localAgent != nullptr && !g_Session.InBackpack())
+    {
+        float len = std::sqrt(hitDx * hitDx + hitDz * hitDz);
+        float nx = len > 0.001f ? hitDx / len : 1.0f;
+        float nz = len > 0.001f ? hitDz / len : 0.0f;
+        float speed = (hitKind == AttackSlam || hitKind == AttackSlamVariant) ? 7.5f : 9.0f;
+        float up = (hitKind == AttackSlam || hitKind == AttackSlamVariant) ? 10.5f : 6.5f;
+        Vector4 push = {nx * speed, up, nz * speed, 0.0f};
+        localAgent->Launch(1.0f, &push, nullptr);
+    }
+
     PlayerState partner;
     bool show = g_Session.Connected() && g_Session.Partner(now, &partner) && player != nullptr && player->chunk != nullptr &&
                 state == GameController::StatePlaying && partner.area == local.area && partner.area != 0 &&
@@ -404,7 +447,7 @@ void UpdatePuppet(double now, const PlayerState& local)
         return;
     }
 
-    // Made again when it's gone or this player is in another chunk (the old one left hidden: its chunk frees it)
+    // Made again when it's gone or this player is in another chunk
     if (!PuppetValid() || g_Puppet.chunk != player->chunk)
     {
         ForgetPuppet();
@@ -466,6 +509,7 @@ void UpdatePuppet(double now, const PlayerState& local)
 
     InstanceContext* instance = g_Puppet.instance;
     instance->flags.visible = 1;
+    instance->flags.collisionActive = 0;
     ObjectPlace* place = instance->place;
     place->SyncPosition();
     Vector4 position = {partner.position[0], partner.position[1], partner.position[2], 1.0f};
@@ -476,6 +520,47 @@ void UpdatePuppet(double now, const PlayerState& local)
     if (moved || turned)
     {
         QueueObject(instance);
+    }
+
+    // Physical player-vs-player interactions when both players are on foot in the same area
+    if (player != nullptr && player->place != nullptr && localAgent != nullptr && !g_Session.InBackpack())
+    {
+        player->place->SyncPosition();
+        Vector4 myPos = player->place->position;
+        float dx = myPos.x - partner.position[0];
+        float dy = myPos.y - partner.position[1];
+        float dz = myPos.z - partner.position[2];
+        float horizDist = std::sqrt(dx * dx + dz * dz);
+
+        u32 moveMode = localAgent->MoveModeOf();
+        u8 attackKind = 0;
+        if (moveMode == CharacterAgent::MoveSpin)
+        {
+            attackKind = AttackSpin;
+        }
+        else if (moveMode == CharacterAgent::MoveSlide)
+        {
+            attackKind = AttackSlide;
+        }
+        else if (moveMode == CharacterAgent::MoveSlam)
+        {
+            attackKind = AttackSlam;
+        }
+
+        static double lastPlayerHitSent = 0;
+        if (attackKind != 0 && horizDist < 1.85f && std::fabs(dy) < 1.6f && now - lastPlayerHitSent >= 0.45)
+        {
+            lastPlayerHitSent = now;
+            g_Session.SendPlayerHit(attackKind, -dx, -dz);
+        }
+
+        if (horizDist < 0.72f && horizDist > 0.001f && std::fabs(dy) < 0.85f)
+        {
+            float pushDist = (0.72f - horizDist) * 0.5f;
+            float nx = dx / horizDist;
+            float nz = dz / horizDist;
+            PutPlayerAt(myPos.x + nx * pushDist, myPos.y, myPos.z + nz * pushDist);
+        }
     }
 }
 
@@ -710,6 +795,7 @@ struct BackpackHold
     bool applied = false;
     InstanceContext* instance = nullptr;
     GamePad* pad = nullptr;
+    u32 collision = 0;
 };
 BackpackHold g_Backpack;
 
@@ -736,7 +822,9 @@ void ApplyBackpack(InstanceContext* player)
     g_Backpack.applied = true;
     g_Backpack.instance = player;
     g_Backpack.pad = controls->pad;
+    g_Backpack.collision = player->flags.collisionActive;
     controls->pad = nullptr;
+    player->flags.collisionActive = 0;
     character->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
     character->eventFlags.eventsOff = 1;
     Native::Log("coop: into the partner's backpack");
@@ -757,13 +845,17 @@ void ReleaseBackpack()
         PlayerCharacter* character = CharacterOf(player);
         if (controls != nullptr && controls->pad == nullptr)
         {
-            controls->pad = g_Backpack.pad;
+            auto* pads = static_cast<GamePadController*>(G_GamePadController);
+            controls->pad = g_Backpack.pad != nullptr ? g_Backpack.pad : (pads != nullptr ? pads->pads[0] : nullptr);
         }
 
         if (character != nullptr)
         {
             character->eventFlags.eventsOff = 0;
+            character->buttons.locked.value = 0;
         }
+
+        player->flags.collisionActive = g_Backpack.collision;
     }
 
     g_Backpack = BackpackHold();
@@ -772,14 +864,72 @@ void ReleaseBackpack()
 
 void RideInBackpack(double now)
 {
-    // Not while the partner is dying, loading or restarting (where they are then means nothing), nor in another area (each area
-    // has its own space: the same numbers are another place)
     PlayerState partner;
     InstanceContext* player = PlayerInstance();
-    if (!g_Session.Partner(now, &partner) || partner.Has(PlayerState::Loading) || player == nullptr ||
-        partner.area != AreaOfPlayer(player))
+    if (!g_Session.Partner(now, &partner) || partner.Has(PlayerState::Loading) || player == nullptr || player->chunk == nullptr)
     {
         return;
+    }
+
+    if (partner.area != AreaOfPlayer(player))
+    {
+        if (partner.area == 0)
+        {
+            return;
+        }
+
+        // Cross chunk links automatically when the carrier moves into another area
+        ChunkLinkData* stepLink = nullptr;
+        for (ChunkLinkData* link = player->chunk->links; link != nullptr; link = link->next)
+        {
+            ChunkData* linked = link->linkedData;
+            if (linked == nullptr || linked->name.string == nullptr)
+            {
+                continue;
+            }
+
+            if (HashKey(linked->name.string) == partner.area)
+            {
+                stepLink = link;
+                break;
+            }
+
+            for (ChunkLinkData* nextLink = linked->links; nextLink != nullptr; nextLink = nextLink->next)
+            {
+                if (nextLink->linkedData != nullptr && nextLink->linkedData->name.string != nullptr &&
+                    HashKey(nextLink->linkedData->name.string) == partner.area)
+                {
+                    stepLink = link;
+                    break;
+                }
+            }
+
+            if (stepLink != nullptr)
+            {
+                break;
+            }
+        }
+
+        if (stepLink != nullptr)
+        {
+            if (stepLink->flags.linkedRm2Loaded != 0)
+            {
+                player->ChangeChunk(stepLink);
+            }
+            else if (stepLink->loadWall != nullptr)
+            {
+                const LoadWall* wall = stepLink->loadWall;
+                float wx = 0.25f * (wall->corners[0].x + wall->corners[1].x + wall->corners[2].x + wall->corners[3].x);
+                float wy = 0.25f * (wall->corners[0].y + wall->corners[1].y + wall->corners[2].y + wall->corners[3].y);
+                float wz = 0.25f * (wall->corners[0].z + wall->corners[1].z + wall->corners[2].z + wall->corners[3].z);
+                PutPlayerAt(wx, wy, wz);
+            }
+        }
+
+        if (partner.area != AreaOfPlayer(player))
+        {
+            return;
+        }
     }
 
     PutPlayerAt(partner.position[0], partner.position[1], partner.position[2]);
@@ -942,11 +1092,9 @@ bool PlayerNear(const WorldEvent& event)
         return false;
     }
 
-    Vector4 at = PositionOfInstance(player);
-    float dx = at.x - event.position[0];
-    float dy = at.y - event.position[1];
-    float dz = at.z - event.position[2];
-    return dx * dx + dy * dy + dz * dz <= NearCrateReach * NearCrateReach;
+    // Replayed objects and objects near the partner step at full rate even when off-screen (StampsUnseen), so any event in the
+    // loaded chunk can be applied immediately
+    return true;
 }
 
 // The partner's world events made this game's
@@ -1353,10 +1501,27 @@ std::string GateLine(double now)
 
     if (status.partnerWaitsForMe)
     {
-        return partner + " esta esperando voce  -  F6: ir ate " + partner;
+        return partner + " esta esperando voce  -  F6 ou Select: ir ate " + partner;
     }
 
     return "";
+}
+
+bool OnlineBackpackPadPressed()
+{
+    static bool was = false;
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    GamePad* pad = pads != nullptr ? pads->pads[0] : nullptr;
+    bool down = false;
+    if (pad != nullptr && pad->info != nullptr)
+    {
+        constexpr u32 Shoulders = (1u << PadL1) | (1u << PadR1);
+        down = (pad->now & (1u << PadSelect)) != 0 || (pad->now & Shoulders) == Shoulders;
+    }
+
+    bool pressed = down && !was;
+    was = down;
+    return pressed;
 }
 }
 
@@ -1401,8 +1566,8 @@ void GameFrame()
                     partner.Has(PlayerState::Watching) ? " watching a cutscene" : "");
     }
 
-    // F5: the backpack in and out
-    if (Pressed(SDL_SCANCODE_F5))
+    // F5 or Select (or L1+R1 on gamepad): the backpack in and out
+    if (Pressed(SDL_SCANCODE_F5) || OnlineBackpackPadPressed())
     {
         if (g_Session.InBackpack())
         {
@@ -1824,6 +1989,81 @@ bool Active()
     return g_Session.GetRole() != Role::Off;
 }
 
+InstanceContext* NetworkPartner()
+{
+    return PuppetValid() && g_Puppet.instance->flags.visible != 0 ? g_Puppet.instance : nullptr;
+}
+
+bool IsHost()
+{
+    StartOnce();
+    return g_Session.IsHost();
+}
+
+int LocalSkin()
+{
+    StartOnce();
+    return static_cast<int>(g_Session.LocalSkin());
+}
+
+int PartnerSkin()
+{
+    return static_cast<int>(g_Session.PartnerSkin());
+}
+
+bool InPartnerBackpack()
+{
+    return g_Session.InBackpack();
+}
+
+bool PartnerInMyBackpack()
+{
+    return g_Session.PartnerInBackpack();
+}
+
+bool IsReplayedObject(const InstanceContext* instance)
+{
+    return IsReplayed(instance);
+}
+
+void SendPingSpot(float x, float y, float z)
+{
+    if (g_Session.Connected())
+    {
+        g_Session.SendPingSpot(x, y, z);
+    }
+}
+
+float OnlineLeashWarning()
+{
+    float limit = g_Session.LeashDistance();
+    if (!g_Session.Connected() || limit <= 0.0f || g_Session.InBackpack() || g_Session.PartnerInBackpack())
+    {
+        return 0.0f;
+    }
+
+    InstanceContext* local = LocalPlayer();
+    InstanceContext* partner = NetworkPartner();
+    if (local == nullptr || partner == nullptr || local->place == nullptr || partner->place == nullptr)
+    {
+        return 0.0f;
+    }
+
+    local->place->SyncPosition();
+    partner->place->SyncPosition();
+    float dx = local->place->position.x - partner->place->position.x;
+    float dy = local->place->position.y - partner->place->position.y;
+    float dz = local->place->position.z - partner->place->position.z;
+    float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    float warnAt = limit * 0.75f;
+    if (dist <= warnAt)
+    {
+        return 0.0f;
+    }
+
+    return dist >= limit ? 1.0f : (dist - warnAt) / (limit - warnAt);
+}
+
 bool ModelDrawn(ModelNode* node)
 {
     if (RidingHides(node))
@@ -1933,6 +2173,26 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
         return false;
     }
 
+    // If a script body starting a cutscene was triggered while g_PlayerInstance was swapped to the remote partner's puppet,
+    // only count this PC as ready when the local player is also near the partner (or in the backpack)
+    if (SwappedToSecond() && !g_Session.InBackpack() && !g_Session.PartnerInBackpack())
+    {
+        InstanceContext* local = LocalPlayer();
+        InstanceContext* partner = NetworkPartner();
+        if (local != nullptr && partner != nullptr && local->place != nullptr && partner->place != nullptr)
+        {
+            local->place->SyncPosition();
+            partner->place->SyncPosition();
+            float dx = local->place->position.x - partner->place->position.x;
+            float dy = local->place->position.y - partner->place->position.y;
+            float dz = local->place->position.z - partner->place->position.z;
+            if (dx * dx + dy * dy + dz * dz > 25.0f * 25.0f)
+            {
+                return true;
+            }
+        }
+    }
+
     // The cutscene's key: the director's object and the graph running, the same on both PCs (the same disc's scripts)
     std::string name = "?";
     auto* director = runner != nullptr ? static_cast<ObjectNodeBase*>(runner->agentNode) : nullptr;
@@ -1951,6 +2211,8 @@ bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* l
     Session::Gate gate = g_Session.AskCutscene(key, Now());
     if (gate == Session::Gate::Go)
     {
+        // Undo any swap of g_PlayerInstance to the partner before starting the cutscene so the cutscene acts on the local player
+        EndObjectUpdate();
         Native::Log("coop: cutscene %s (%08X) starts", name.c_str(), key);
         ShowLine("");
         return false;

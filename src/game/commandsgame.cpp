@@ -84,8 +84,16 @@ void ControllerRumbleCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLev
     VibrateForShake(strength);
 }
 
-void RestartFromCheckpointCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
+void RestartFromCheckpointCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLevel*)
 {
+#ifdef TWIN_NATIVE
+    if (Coop::Active() && !Coop::InPartnerBackpack() &&
+        (Coop::SwappedToSecond() ||
+         (runner != nullptr && runner->agentNode != nullptr && runner->agentNode->owner == Coop::NetworkPartner())))
+    {
+        return;
+    }
+#endif
     G_GameController->RestartFromCheckpoint();
 }
 

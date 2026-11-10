@@ -33,6 +33,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 // The commands that work on the playable characters and the agents around them (velocities thrown, the agents' and the player's
 // settings, counters, hits on the instances in an instance's hulls, respawn points, links, vehicles, crates), the damage commands'
 // parsers of a token, two command classes nothing makes, a character's surface sounds, and this translation unit's start-up
@@ -1033,6 +1037,13 @@ void SetPlayerRespawnPositionCommand::Execute(TimeClock*, BehaviourRunner* runne
     GameProgress* progress = &controller->progress;
     ChunkManager* chunks = controller->chunkManager;
     InstanceContext* instance = NodeOf(runner)->owner;
+#ifdef TWIN_NATIVE
+    InstanceContext* localPlayer = Coop::Active() ? Coop::LocalPlayer() : nullptr;
+    if (Coop::Active() && (localPlayer == nullptr || instance->chunk != localPlayer->chunk))
+    {
+        return;
+    }
+#endif
     u32 pairing = progress->play.pairing;
     bool saves = respawn.saves != 0;
     Checkpoint* checkpoint;
@@ -1050,18 +1061,25 @@ void SetPlayerRespawnPositionCommand::Execute(TimeClock*, BehaviourRunner* runne
     // The pairings of one character and of two (5 as well); the others set nothing (the hoverboard's with its controls among them)
     bool set = false;
     GameProgress* now = &G_GameController->progress;
+    InstanceContext* playedCharacter = now->Instance(now->play.character);
+#ifdef TWIN_NATIVE
+    if (localPlayer != nullptr && Coop::SwappedToSecond())
+    {
+        playedCharacter = localPlayer;
+    }
+#endif
     switch (pairing)
     {
     case PairingAlone:
     case PairingHoverboard:
-        set = checkpoint->Set(pairing, chunks, instance, now->Instance(now->play.character), nullptr);
+        set = checkpoint->Set(pairing, chunks, instance, playedCharacter, nullptr);
         break;
     case PairingHumiliskate:
     case PairingRollerbrawl:
     case PairingTied:
     case Pairing5:
     {
-        InstanceContext* character = now->Instance(now->play.character);
+        InstanceContext* character = playedCharacter;
         InstanceContext* second = now->Instance(now->play.second);
         set = checkpoint->Set(pairing, chunks, instance, character, second);
         break;

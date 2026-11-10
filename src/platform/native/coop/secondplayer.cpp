@@ -57,6 +57,11 @@ Second g_Second;
 // Whether the second player is asked for: $TWIN_PLAYERS, else coop.ini's players
 bool Wanted()
 {
+    if (Active())
+    {
+        return false;
+    }
+
     static int wanted = -1;
     if (wanted < 0)
     {
@@ -96,6 +101,12 @@ bool Valid()
 
 InstanceContext* FirstPlayer()
 {
+    InstanceContext* local = LocalPlayer();
+    if (local != nullptr)
+    {
+        return local;
+    }
+
     return g_PlayerInstance != nullptr ? static_cast<InstanceContext*>(g_PlayerInstance->object) : nullptr;
 }
 
@@ -218,7 +229,12 @@ void Make()
 
 InstanceContext* SecondPlayer()
 {
-    return Valid() ? g_Second.instance : nullptr;
+    if (Valid())
+    {
+        return g_Second.instance;
+    }
+
+    return Active() ? NetworkPartner() : nullptr;
 }
 
 bool SecondPlayerWanted()
@@ -247,7 +263,7 @@ InstanceContext* ViewCamera(GameController* controller)
 // either is the first view)
 bool TwoViewsOn(GameController* controller, InstanceContext* second, InstanceContext* secondCamera)
 {
-    return controller != nullptr && second != nullptr && secondCamera != nullptr && ViewCamera(controller) != nullptr &&
+    return Wanted() && controller != nullptr && second != nullptr && secondCamera != nullptr && ViewCamera(controller) != nullptr &&
            controller->State() == GameController::StatePlaying &&
            (controller->states.camera == GameController::CameraFollow ||
             controller->states.camera == GameController::CameraGameRig);
@@ -511,7 +527,7 @@ void OrbitCameras()
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
     OrbitCamera(0, FirstPlayer(), ViewCamera(controller), pads != nullptr ? pads->pads[0] : nullptr);
     InstanceContext* second = SecondPlayer();
-    if (second != nullptr)
+    if (Wanted() && second != nullptr)
     {
         OrbitCamera(1, second, CameraOf(second), pads != nullptr ? pads->pads[1] : nullptr);
     }
@@ -792,6 +808,11 @@ void MinimapButtons()
     const bool* keys = SDL_GetKeyboardState(nullptr);
     down[0] = keys != nullptr && keys[SDL_SCANCODE_M];
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    if (Active() && pads != nullptr && pads->pads[0] != nullptr && pads->pads[0]->info != nullptr)
+    {
+        down[0] = down[0] || (pads->pads[0]->now & (1u << PadUp)) != 0;
+    }
+
     GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
     if (second != nullptr && second->info != nullptr)
     {
@@ -912,6 +933,11 @@ void MakePing(int player)
     g_Ping.at = {hit.x, hit.y, hit.z, 1.0f};
     g_Ping.since = SDL_GetTicksNS();
     PlayPingChime();
+    if (Active())
+    {
+        SendPingSpot(hit.x, hit.y, hit.z);
+    }
+
     Native::Log("second player: player %d pinged (%.1f, %.1f, %.1f)", player + 1, hit.x, hit.y, hit.z);
 }
 
@@ -975,6 +1001,11 @@ void PingFrame()
     }
 
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    if (Active() && pads != nullptr && pads->pads[0] != nullptr && pads->pads[0]->info != nullptr)
+    {
+        down[0] = down[0] || (pads->pads[0]->now & (1u << PadR3)) != 0;
+    }
+
     GamePad* second = pads != nullptr ? pads->pads[1] : nullptr;
     if (second != nullptr && second->info != nullptr)
     {
@@ -1055,6 +1086,14 @@ void ProjectPing(int view)
 }
 }
 
+void ReceivePingSpot(float x, float y, float z)
+{
+    g_Ping.active = true;
+    g_Ping.at = {x, y, z, 1.0f};
+    g_Ping.since = SDL_GetTicksNS();
+    PlayPingChime();
+}
+
 bool PingPlace(float* x, float* z)
 {
     if (!g_Ping.active || static_cast<float>(SDL_GetTicksNS() - g_Ping.since) / 1e9f > PingSeconds)
@@ -1117,14 +1156,14 @@ bool OrbitCameraWanted()
 
 void BeforeDraw()
 {
-    if (Wanted() && OrbitCameraWanted())
+    if ((Wanted() || Active()) && OrbitCameraWanted())
     {
         OrbitCameras();
     }
 
     g_Drawings++;
     // The minimap's things, listed a few times a second
-    if ((g_MiniWanted[0] || g_MiniWanted[1]) && Wanted() && g_Drawings % 4 == 1)
+    if ((g_MiniWanted[0] || g_MiniWanted[1]) && (Wanted() || Active()) && g_Drawings % 4 == 1)
     {
         ListMiniThings();
     }
@@ -1632,12 +1671,12 @@ float DistanceBetween(ObjectPlace* a, ObjectPlace* b)
 // whose backpack the other rides in alone while it's ridden (the rider isn't in the world)
 bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, InstanceContext* second)
 {
-    if (g_Ride.rider == 0)
+    if (g_Ride.rider == 0 || (Active() && InPartnerBackpack()))
     {
         return true;
     }
 
-    if (g_Ride.rider == 1)
+    if (g_Ride.rider == 1 || (Active() && PartnerInMyBackpack()))
     {
         return false;
     }
@@ -1665,7 +1704,14 @@ bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, Instanc
 
     float toFirst = DistanceBetween(thing->place, first->place);
     float toSecond = DistanceBetween(thing->place, second->place);
-    bool& follows = g_Follows[thing];
+    auto found = g_Follows.find(thing);
+    if (found == g_Follows.end())
+    {
+        // Symmetric initial assignment across Host and Client: Player 1 (Host) initially owns equidistant followers
+        found = g_Follows.emplace(thing, Active() && !IsHost()).first;
+    }
+
+    bool& follows = found->second;
     if (follows)
     {
         if (toFirst < toSecond - 3.0f && toFirst < toSecond * 0.75f)
@@ -1684,14 +1730,15 @@ bool FollowsSecond(const InstanceContext* thing, InstanceContext* first, Instanc
 
 InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played)
 {
+    InstanceContext* first = LocalPlayer() != nullptr ? LocalPlayer() : played;
     InstanceContext* second = g_SecondModel != nullptr ? SecondPlayer() : nullptr;
-    if (from == nullptr || played == nullptr || second == nullptr || from->place == nullptr || played->place == nullptr ||
+    if (from == nullptr || first == nullptr || second == nullptr || from->place == nullptr || first->place == nullptr ||
         second->place == nullptr || from->chunk == nullptr)
     {
-        return played;
+        return first != nullptr ? first : played;
     }
 
-    return FollowsSecond(from, played, second) ? second : played;
+    return FollowsSecond(from, first, second) ? second : first;
 }
 
 // "The player" for each thing the world steps (instances.cpp's ChunkInstances::Update, around each node's update): the game asks
@@ -1719,6 +1766,12 @@ void KeepSecondRef()
 {
     InstanceContext* second = SecondPlayer();
     auto* node = second != nullptr ? static_cast<PlayerNode*>(GetGameNode(&second->nodes, NodeCharacter)) : nullptr;
+    if (node == nullptr && Active() && second != nullptr)
+    {
+        InstanceContext* first = FirstPlayer();
+        node = first != nullptr ? static_cast<PlayerNode*>(GetGameNode(&first->nodes, NodeCharacter)) : nullptr;
+    }
+
     g_SecondCharacter = node != nullptr ? node->character : nullptr;
     g_SecondPart = g_SecondCharacter != nullptr ? static_cast<CharacterPart*>(g_SecondCharacter->part) : nullptr;
     if (second == g_SecondRefFor)
@@ -1750,7 +1803,8 @@ float SquaredBetween(ObjectPlace* a, ObjectPlace* b)
 float SoundNearness(const Vector4* at, InstanceContext* listener)
 {
     InstanceContext* second = g_SecondRefFor;
-    if (at == nullptr || second == nullptr || listener == nullptr || listener->place == nullptr || g_Ride.rider == 1)
+    if (at == nullptr || second == nullptr || listener == nullptr || listener->place == nullptr || g_Ride.rider == 1 ||
+        (Active() && PartnerInMyBackpack()))
     {
         return 1.0f;
     }
@@ -1777,11 +1831,56 @@ float SoundNearness(const Vector4* at, InstanceContext* listener)
     return first > 0.01f && near < first ? near / first : 1.0f;
 }
 
+InstanceContext* LocalPlayer()
+{
+    Reference* ref = g_Swapped ? g_SavedPlayer : g_PlayerInstance;
+    return ref != nullptr ? static_cast<InstanceContext*>(ref->object) : nullptr;
+}
+
+bool SwappedToSecond()
+{
+    return g_Swapped;
+}
+
+bool ShouldStepObject(const InstanceContext* instance)
+{
+    if (instance == nullptr)
+    {
+        return false;
+    }
+
+    if (Active() && IsReplayedObject(instance))
+    {
+        return true;
+    }
+
+    InstanceContext* second = g_SecondRefFor;
+    if (second == nullptr || second->place == nullptr || instance->place == nullptr || instance->chunk != second->chunk)
+    {
+        return false;
+    }
+
+    if (g_Ride.rider == 1 || (Active() && PartnerInMyBackpack()))
+    {
+        return false;
+    }
+
+    return SquaredBetween(instance->place, second->place) <= 35.0f * 35.0f;
+}
+
 void BeginObjectUpdate(InstanceContext* owner)
 {
     // $TWIN_P2_NO_SWAP (tests): the world sees the first player only, as before
     static const bool off = std::getenv("TWIN_P2_NO_SWAP") != nullptr;
     if (off || g_Swapped || g_SecondRef == nullptr || g_SecondRefFor == nullptr || owner == nullptr)
+    {
+        return;
+    }
+
+    // In online co-op each PC collects its own pickups and runs its own camera/controls; world objects, enemies, bosses and
+    // triggers swap to whichever player is nearer
+    if (Active() &&
+        (owner->nodes.mask & ((1u << NodePickup) | (1u << NodeCameraLens) | (1u << NodeFollow) | (1u << NodeControls))) != 0)
     {
         return;
     }
@@ -1836,6 +1935,11 @@ void BeginObjectUpdate(InstanceContext* owner)
         g_PlayerPart2 = g_SecondPart;
     }
 
+    if (Active() && (second->nodes.mask & (1u << NodeCharacter)) == 0 && second->nodes.nodes[NodeCharacter] == nullptr)
+    {
+        second->nodes.nodes[NodeCharacter] = first->nodes.nodes[NodeCharacter];
+    }
+
     g_Swapped = true;
 }
 
@@ -1847,6 +1951,12 @@ void EndObjectUpdate()
     }
 
     g_Swapped = false;
+    if (Active() && g_SecondRefFor != nullptr && InstanceLive(g_SecondRefFor) &&
+        (g_SecondRefFor->nodes.mask & (1u << NodeCharacter)) == 0)
+    {
+        g_SecondRefFor->nodes.nodes[NodeCharacter] = nullptr;
+    }
+
     // (Given back unless the step itself changed them: then the game's own change stands)
     if (g_PlayerInstance == g_SecondRef)
     {
@@ -1872,18 +1982,45 @@ void EndObjectUpdate()
 InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
 {
     // (Anything asking, not only Cortex and Nina: a worm the second player jumped on launched the first, again and again)
-    if (g_SecondModel == nullptr || asking == nullptr || player == nullptr || asking == player)
+    if (g_SecondModel == nullptr || asking == nullptr || player == nullptr)
     {
         return player;
     }
 
+    InstanceContext* first = LocalPlayer() != nullptr ? LocalPlayer() : player;
+    if (asking == first)
+    {
+        return first;
+    }
+
     InstanceContext* second = SecondPlayer();
-    return asking == second ? second : NearerPlayer(asking, player);
+    return asking == second ? second : NearerPlayer(asking, first);
 }
 
 bool TintsGreen(const ModelNode* node)
 {
-    return node != nullptr && node == g_SecondModel;
+    if (node == nullptr)
+    {
+        return false;
+    }
+
+    if (Active())
+    {
+        if (node == g_SecondModel)
+        {
+            return PartnerSkin() != 0;
+        }
+
+        InstanceContext* local = LocalPlayer();
+        if (local != nullptr && node == ModelOf(local))
+        {
+            return LocalSkin() != 0;
+        }
+
+        return false;
+    }
+
+    return node == g_SecondModel;
 }
 
 void Greened(float* red, float* green, float* blue)
@@ -1897,7 +2034,12 @@ void Greened(float* red, float* green, float* blue)
 float LeashWarning()
 {
     GameController* controller = G_GameController;
-    return controller != nullptr && controller->State() == GameController::StatePlaying ? g_Leash : 0.0f;
+    if (controller == nullptr || controller->State() != GameController::StatePlaying)
+    {
+        return 0.0f;
+    }
+
+    return Active() ? OnlineLeashWarning() : g_Leash;
 }
 
 int SharedPadMode()
@@ -2215,6 +2357,13 @@ void SecondPlayerFrame()
 {
     if (!Wanted())
     {
+        if (Active())
+        {
+            g_SecondModel = ModelOf(SecondPlayer());
+            KeepSecondRef();
+            PingFrame();
+        }
+
         return;
     }
 

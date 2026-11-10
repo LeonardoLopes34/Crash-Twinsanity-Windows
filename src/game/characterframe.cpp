@@ -26,6 +26,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef TWIN_NATIVE
+#include "coop/coop.h"
+#endif
+
 extern "C"
 {
     // A pickup's object node put in a state (pickups.cpp's PickupObjectNode::SetState)
@@ -726,11 +730,21 @@ void CharacterAgent::TellTrigger(FollowCamera* camera, InstanceContext* trigger,
             return;
         }
 
+#ifdef TWIN_NATIVE
+        // Two players: don't let one player's check overwrite or clear a trigger while the other player is already inside it
+        ReferencedObject* current =
+            node->inside.count > 0 && node->inside.handles[0] != nullptr ? node->inside.handles[0]->object : nullptr;
+        if (current != nullptr && current != instance)
+        {
+            return;
+        }
+#endif
+
         node->CheckWith(entered != 0 ? instance : nullptr);
         return;
     }
 
-    if (cameraNode == nullptr || entered == 0 || cameraNode->bits.neverPolled == 0)
+    if (camera == nullptr || cameraNode == nullptr || entered == 0 || cameraNode->bits.neverPolled == 0)
     {
         return;
     }
@@ -744,19 +758,30 @@ void CharacterAgent::CheckTriggers()
     u32 played = g_AgentsGameController->progress.play.character;
     s32 character = properties->GetInt(CharacterKindProperty);
     // A character of no kind only checks them while it's the one played
+#ifdef TWIN_NATIVE
+    bool isSecondPlayer = instance == Coop::SecondPlayer();
+    if ((follow == nullptr && !isSecondPlayer) || (character == CharacterNone && played != CharacterNone))
+    {
+        return;
+    }
+#else
     if (follow == nullptr || (character == CharacterNone && played != CharacterNone))
     {
         return;
     }
+#endif
 
     // Both sets are sorted by the objects' addresses, so they're walked side by side: a trigger in both is told it's entered
     // again, one only in the old set that it's left, one only in the new set that it's entered
     ReferenceSet now;
     GatherTriggerInstances(&now, instance->chunk, g_TriggerNodeKinds, instance);
-    FollowCamera* camera = &follow->camera;
+    FollowCamera* camera = follow != nullptr ? &follow->camera : nullptr;
     HandleWalk fresh = {g_HandleWalkVTable, 0, &now};
     HandleWalk old = {g_HandleWalkVTable, 0, &triggers};
-    TakeChosenCamera(camera);
+    if (camera != nullptr)
+    {
+        TakeChosenCamera(camera);
+    }
     while (!old.AtEnd() && !fresh.AtEnd())
     {
         auto* was = static_cast<InstanceContext*>(old.Object());

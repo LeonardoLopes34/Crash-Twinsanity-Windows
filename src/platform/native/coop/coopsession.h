@@ -62,6 +62,8 @@ enum class EventKind : uint8_t
     Pause = 10,         // "I paused": the partner's game pauses too, and only this player resumes
     Resume = 11,
     Died = 12,          // "I'm going back to my checkpoint" (the backpack's rider goes too)
+    PlayerHit = 13,     // a physical attack (spin/slide/slam) that knocked the partner
+    PingSpot = 14,      // a 3D ping marker placed by a player's camera
 };
 
 // A shared world event: what happened (the game's kinds: coopgame.cpp), the area (its chunk's hash), the instance's ID (the game's,
@@ -135,7 +137,9 @@ public:
     bool Connected() const { return link == Link::Connected; }
     const std::string& Error() const { return error; }
     const std::string& PartnerName() const { return partnerName; }
+    uint8_t LocalSkin() const { return settings.skin; }
     uint8_t PartnerSkin() const { return partnerSkin; }
+    float LeashDistance() const { return settings.leashDistance; }
     double RoundTrip() const { return roundTrip; }
 
     // The partner's character as it was InterpolationDelay ago, blended between the two states around then. False with none yet
@@ -181,6 +185,12 @@ public:
     bool TakeDied() { return Take(&diedTold); }
     bool PausePending() const { return pauseAsked; }
 
+    // Physical player-to-player hit and 3D ping marker
+    void SendPlayerHit(uint8_t attackKind, float dx, float dz);
+    bool TakePlayerHit(uint8_t* attackKind, float* dx, float* dz);
+    void SendPingSpot(float x, float y, float z);
+    bool TakePingSpot(float* x, float* y, float* z);
+
     // The HUD's lines (Portuguese)
     const std::deque<Notice>& Notices() const { return notices; }
     void Notify(const std::string& text, double seconds = 4);
@@ -209,6 +219,12 @@ private:
     bool pauseAsked = false;
     bool resumeAsked = false;
     bool diedTold = false;
+    bool hitReceived = false;
+    uint8_t hitAttackKind = 0;
+    float hitDx = 0;
+    float hitDz = 0;
+    bool pingReceived = false;
+    float pingSpot[3] = {0, 0, 0};
 
     Settings settings;
     UdpSocket socket;

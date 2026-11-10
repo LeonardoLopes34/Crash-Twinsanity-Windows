@@ -42,6 +42,12 @@ bool TrajectoryKeepsStepping(const Trajectory* trajectory)
 u32 StampsUnseen(const ObjectNode* node)
 {
     const InstanceContext* owner = node->owner;
+#ifdef TWIN_NATIVE
+    if (Coop::ShouldStepObject(owner))
+    {
+        return 0;
+    }
+#endif
     u32 seen = owner->seen;
     u32 since = node->nearDistance;
     if (since == GameNode::AnyNearDistance || !(since < seen))

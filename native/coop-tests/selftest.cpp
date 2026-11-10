@@ -393,6 +393,39 @@ void TestLeaving()
     int frames = other.Until([&] { return other.host.Connected() && other.client.Connected(); });
     Check(frames >= 0, "e consegue reconectar");
 }
+
+void TestPlayerHitAndPing()
+{
+    std::printf("Interação física entre os jogadores e marcador 3D (ping)\n");
+    Pair pair;
+    pair.Start(37431);
+    pair.Until([&] { return pair.host.Connected() && pair.client.Connected(); });
+
+    pair.host.SendPlayerHit(6, 1.5f, -0.5f);
+    uint8_t hitKind = 0;
+    float hitDx = 0, hitDz = 0;
+    bool gotHit = false;
+    for (int frame = 0; frame < 60 && !gotHit; frame++)
+    {
+        pair.Step();
+        gotHit = pair.client.TakePlayerHit(&hitKind, &hitDx, &hitDz);
+    }
+
+    Check(gotHit && hitKind == 6 && std::fabs(hitDx - 1.5f) < 0.01f && std::fabs(hitDz + 0.5f) < 0.01f,
+          "ataque físico (giro/rasteira/barrigada) chega ao parceiro com a direção certa");
+
+    pair.client.SendPingSpot(12.5f, 3.0f, -44.25f);
+    float px = 0, py = 0, pz = 0;
+    bool gotPing = false;
+    for (int frame = 0; frame < 60 && !gotPing; frame++)
+    {
+        pair.Step();
+        gotPing = pair.host.TakePingSpot(&px, &py, &pz);
+    }
+
+    Check(gotPing && std::fabs(px - 12.5f) < 0.01f && std::fabs(py - 3.0f) < 0.01f && std::fabs(pz + 44.25f) < 0.01f,
+          "marcador 3D (ping) chega ao outro PC nas coordenadas exatas");
+}
 }
 
 int main()
@@ -407,6 +440,7 @@ int main()
     TestLeash();
     TestBadNetwork();
     TestLeaving();
+    TestPlayerHitAndPing();
     std::printf("\n%d de %d verificações passaram\n", g_Checks - g_Failures, g_Checks);
     return g_Failures == 0 ? 0 : 1;
 }
