@@ -360,6 +360,11 @@ bool DrawingSecondView()
     return g_Lent;
 }
 
+bool LastDrawnSecondView()
+{
+    return g_Drawn == 1;
+}
+
 // The third person camera (both players, F7 the game's own instead): the right stick (the mouse too for the first player) turns it
 // round the character, it stays where it's left (nothing turns it on its own, nothing draws its eye), kept short of the walls. Its
 // matrix written over the game's camera each frame before the drawing (the game's rig still runs, its place overwritten); on foot

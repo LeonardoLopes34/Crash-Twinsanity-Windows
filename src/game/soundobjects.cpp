@@ -1091,6 +1091,14 @@ void UpdateInstanceSounds()
         return;
     }
 
+#ifdef TWIN_NATIVE
+    // Two players: only after a drawing of the first player's view, whose camera hears. After the second's, the chunks' draw
+    // matrices and drawn stamps are the second camera's: near an area's edge the sounds were placed wrong or silenced, fading out
+    if (Coop::LastDrawnSecondView())
+    {
+        return;
+    }
+#endif
     InstanceContext* listener = Listener();
     Matrix4x4 view;
     ListenerView(&view);
@@ -1293,6 +1301,13 @@ void UpdateMusicEmitters()
         return;
     }
 
+#ifdef TWIN_NATIVE
+    // (As the instances' sounds: only after a drawing of the first player's view)
+    if (Coop::LastDrawnSecondView())
+    {
+        return;
+    }
+#endif
     Matrix4x4 view;
     ListenerView(&view);
     // Unlike the instances' sounds, there's no check for a view or a camera: without one the chunk is read from address 0xA0

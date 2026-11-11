@@ -82,6 +82,8 @@ void AfterDraw();
 // in a drawn cell for either camera stays drawn
 bool TwoViews();
 bool DrawingSecondView();
+// Whether the last frame drawn was the second player's view (its chunks' draw matrices and drawn stamps are that camera's)
+bool LastDrawnSecondView();
 // An instance met by a camera's drawing (scenery.cpp's culling: in view or not, at a distance): its drawn cell flag and its seen
 // stamp (the distance the game's update rates go by) made both cameras' (in view of either, the nearer distance)
 void NoteSeen(InstanceContext* instance, unsigned distance, bool inView);
