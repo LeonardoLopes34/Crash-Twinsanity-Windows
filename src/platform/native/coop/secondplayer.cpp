@@ -252,6 +252,9 @@ int g_Drawing = 0;
 int g_Drawn = 0;
 // When the next frame starts (TwoViewsFrame's choice; 0: as the frame rate paces it)
 u64 g_PaceAt = 0;
+// The last three choices' turns (a picture is shown two frames after its choice) and how many there have been since two views began
+u64 g_Turns[3] = {0, 0, 0};
+u64 g_TurnCount = 0;
 
 // A window's frames a second: the first's 90 (half the 180 Hz screen's refreshes), the second's 60 (Parsec's stream), or
 // $TWIN_P1_FPS and $TWIN_P2_FPS
@@ -1292,6 +1295,7 @@ int TwoViewsFrame()
         {
             // One view (cutscenes, menus, pauses): the first window's rate, both windows showing it
             turns[1] = 0;
+            g_TurnCount = 0;
             turns[0] = turns[0] == 0 || turns[0] + periods[0] < now ? now : turns[0];
             g_PaceAt = turns[0];
             turns[0] += periods[0];
@@ -1315,7 +1319,11 @@ int TwoViewsFrame()
             }
 
             next = turns[0] <= turns[1] ? 0 : 1;
-            g_PaceAt = turns[next];
+            // (Its picture is shown two frames later, graphics/display.cpp's ShowFrame: the frame whose start is paced now shows the
+            // picture chosen two choices ago, so that one's turn paces it)
+            g_Turns[g_TurnCount % 3] = turns[next];
+            g_TurnCount++;
+            g_PaceAt = g_TurnCount >= 3 ? g_Turns[(g_TurnCount - 3) % 3] : turns[next];
             turns[next] += periods[next];
         }
     }

@@ -1752,13 +1752,16 @@ void ShowFrame()
     {
         RenderWaitFrame(frame - 1);
         Shown& before = g_Shown[(frame - 1) % 3];
-        // (The render thread draws a frame behind the game: the picture shown now was drawn from the camera chosen for the frame
-        // queued now, the views alternating; measured on the two windows, 2026-11-08)
-        g_PresentTarget = WindowForView(views[frame % 3]);
+        // The picture shown now was drawn two frames ago: the PS2's screen shows the buffer drawn the frame before, and the render
+        // thread makes it a frame behind the game. (Taken as the current frame's camera until 2026-11-11: right only while the
+        // views alternated, every other frame each, when two frames ago is the same view as now. With each window at its own rate
+        // the other player's pictures came into a window: the first player's window showed both views, frame by frame)
+        const int view = views[(frame + 1) % 3];
+        g_PresentTarget = WindowForView(view);
         PresentShown(before);
         g_PresentTarget = nullptr;
         // One view for both (a cutscene, a pause, the menus, a load): the same picture in the second player's window too
-        if (views[frame % 3] == Coop::BothViews)
+        if (view == Coop::BothViews)
         {
             SDL_Window* second = WindowForView(1);
             if (second != nullptr && second != g_Presenter.window)
