@@ -2590,6 +2590,8 @@ namespace
 u64 g_OutAfterCutscene = 0;
 // The game went back to a checkpoint: the second player is made again from scratch once play is back
 bool g_FreshAfterRestart = false;
+// The second player made fresh after a cutscene: out of the backpack a second after it's made
+bool g_OutWhenMade = false;
 
 // Once a frame of play: a player's camera that stays far from its character (after Tikimon's fight the first player's view
 // hung over the whole island, until a ride in the backpack set it again) is set again: the third person camera taken over
@@ -2890,6 +2892,20 @@ void SecondPlayerFrame()
         heldPad = nullptr;
     }
 
+    // Back from a cutscene: the second player made again from scratch too, in the first's backpack and out beside it a second later.
+    // A cutscene the second player set off ran the script's first commands while the world took it for "the player" (held in a pose,
+    // its gravity off) and the game let only the first go after it: the second hung in the air, unable to move, the backpack
+    // didn't free it (2026-11-11, the second cutscene by the beach)
+    if (returning && Valid() && fromCutscene && !g_FreshAfterRestart)
+    {
+        fromCutscene = false;
+        returning = false;
+        playingFrames = 0;
+        g_OutWhenMade = true;
+        RetireSecond("back from a cutscene: made fresh");
+        return;
+    }
+
     if (returning && Valid() && g_FreshAfterRestart)
     {
         g_FreshAfterRestart = false;
@@ -3025,6 +3041,14 @@ void SecondPlayerFrame()
                 // Made: in the first player's backpack to start with (never in a wall); Select gets out
                 StartRide(1);
             }
+
+            if (g_OutWhenMade && g_Ride.rider == 1)
+            {
+                // (Made fresh after a cutscene: out beside the first a second into play, as before)
+                g_OutAfterCutscene = SDL_GetTicksNS() + 1000000000ull;
+            }
+
+            g_OutWhenMade = false;
         }
     }
 }
