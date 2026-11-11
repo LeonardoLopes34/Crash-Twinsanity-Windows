@@ -259,6 +259,7 @@ u64 g_TurnCount = 0;
 // A frame's start and its work (nanoseconds, a running mean); whether the first window is at the second's rate for now, and since
 // when the work has fitted with room
 u64 g_FrameStart = 0;
+u64 g_FrameWork = 0;
 double g_FrameCost = 0.0;
 bool g_Reduced = false;
 u64 g_FitsSince = 0;
@@ -1312,12 +1313,14 @@ int TwoViewsFrame()
         u64 now = SDL_GetTicksNS();
         // The first window at the second's rate while a frame's work doesn't fit the two rates together (looking at the chickens by the
         // nitro at the start, a frame took 6.8 ms of the 6.7 that 90 + 60 leave), its own again once it fits with room for 3 s. The
-        // frame's work: from its start (TakeTwoViewsPace) to here, the render thread's wait in it
+        // frame's work: TakeTwoViewsPace's, from a frame's start to the next wait for the vertical blank, the render thread's wait in
+        // it. (Measured from that wait to here, just after it, it was always about 0: the window never went down to 60, 110 frames a
+        // second in the boss fight with 8.5 ms of work, 2026-11-11)
         {
             const double full = 1e9 / static_cast<double>(ViewRate(0) + ViewRate(1));
-            if (g_FrameStart != 0 && now > g_FrameStart && now - g_FrameStart < 100000000ull)
+            if (g_FrameWork != 0 && g_FrameWork < 100000000ull)
             {
-                g_FrameCost = g_FrameCost * 0.95 + static_cast<double>(now - g_FrameStart) * 0.05;
+                g_FrameCost = g_FrameCost * 0.95 + static_cast<double>(g_FrameWork) * 0.05;
             }
 
             if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
@@ -1416,6 +1419,8 @@ unsigned long long TakeTwoViewsPace()
     g_PaceAt = 0;
     // (When the frame will start: at its turn, or now when that's past; its work measured from there, TwoViewsFrame)
     u64 now = SDL_GetTicksNS();
+    // The frame just done's work: from its start to here (the game's wait for the vertical blank, before the picture's shown)
+    g_FrameWork = g_FrameStart != 0 && now > g_FrameStart ? now - g_FrameStart : 0;
     g_FrameStart = at > now ? at : now;
     return at;
 }
