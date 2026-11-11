@@ -104,6 +104,8 @@ boneco (puppet) sem física. A troca de "o jogador" e o `NearerPlayer` ficam des
 
 - Barcos e portas de fase: **quem entra é o Jogador 1**, com o Jogador 2 na mochila. Assim chegaram ao Ice Lab sem bug.
 - Cutscene: começa na hora, Jogador 2 na mochila, depois os dois juntos.
+- Veículo com o Cortex (pareamento 3, a bola da caverna, que vale a caverna inteira; 2, o Humiliskate): o Jogador 2 fica na
+  mochila, com uma vista só (`OnVehicle`). Decidido com o usuário em 11/11: andar junto não acompanha a bola.
 - O `coop\Jogar\GUIA-PARSEC.txt` é o guia dos jogadores. **Atualize sempre que mudar algum comportamento.**
 
 ## Para testar (correções de 11/11 ainda não jogadas)
