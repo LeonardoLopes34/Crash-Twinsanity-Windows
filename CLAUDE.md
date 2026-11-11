@@ -110,7 +110,7 @@ boneco (puppet) sem física. A troca de "o jogador" e o `NearerPlayer` ficam des
 
 | Commit | O quê |
 |---|---|
-| (este) | Jogador 2 antigo tirado da área ao ser recriado (`RetireSecond`): ficava dormindo lá e voltava como clone do Jogador 1 na próxima morte |
+| 6f4f15d | Jogador 2 antigo tirado da área ao ser recriado (`RetireSecond`): ficava dormindo lá e voltava como clone do Jogador 1 na próxima morte |
 | 2190d5c | Cutscene disparada pelo Jogador 2 em outra área leva o Jogador 1 até lá; mochila que soltava na hora; câmera em outra área |
 | 1db3854 | Jogador 2 recriado depois de toda cutscene (ficava flutuando sem andar) |
 | a66837d | Janela 1 cai para 60 quando o quadro não cabe (galinhas perto do nitro); Jogador 1 sai da mochila onde estava; Jogador 2 preso no ar numa área vizinha |
