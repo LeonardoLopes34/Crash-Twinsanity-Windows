@@ -23,6 +23,7 @@
 #include "game/place.h"
 #include "game/player.h"
 #include "game/reference.h"
+#include "game/scenery.h"
 #include "game/sound.h"
 
 #include <SDL3/SDL.h>
@@ -1610,7 +1611,15 @@ void RetireSecond(const char* why)
             controls->pad = nullptr;
         }
 
-        CallVirtual<u32>(old, old->vtable, ReferencedObject::SleepSlot);
+        // Taken out of its chunk altogether (its cells, its nodes, the chunk's sleeping list), not put to sleep there: a return to
+        // a checkpoint takes every sleeping instance of the chunks back to the game's start (ResetChunkInstances), and the old
+        // second player woke up there as a copy of the first player, where it was retired (2026-11-11: a cutscene player 2 set off
+        // in another area, player 1 taken there, and at the next death a player 1 stood on that spot). In no chunk it's never
+        // stepped, drawn or reset again. (Not released: its camera's rig and the game's handles still point at it)
+        if (old->chunk != nullptr)
+        {
+            ChunkRemoveInstance(old->chunk, old);
+        }
     }
 
     g_Second = Second();
