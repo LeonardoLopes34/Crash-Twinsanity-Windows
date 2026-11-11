@@ -1427,6 +1427,10 @@ struct Ride
     Vector4 from = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 Ride g_Ride;
+// The carrier's place a frame ago (a jump between frames is another area's numbers, a teleport), forgotten at each ride's start:
+// kept from the last ride, a new one ended at once, four times in a row (2026-11-11)
+Vector4 g_CarrierWas = {0.0f, 0.0f, 0.0f, 1.0f};
+InstanceContext* g_CarrierWasOf = nullptr;
 // When a ride last started or ended: a press within a moment of it is ignored (the log showed ten changes a second at a boss)
 u64 g_RideChanged = 0;
 constexpr u64 RideDebounce = 400000000ull;
@@ -1471,6 +1475,7 @@ void StartRide(int rider)
     }
 
     g_RideChanged = SDL_GetTicksNS();
+    g_CarrierWasOf = nullptr;
     g_Ride.rider = rider;
     g_Ride.instance = instance;
     g_Ride.pad = controls->pad;
@@ -1759,8 +1764,8 @@ void BackpackFrame()
         // The carrier's place jumped (another area's numbers, a teleport) or it left the area: the first player isn't carried
         // there. The game loads the world around the first player only: carried with the second onto the boat to the Ice Lab, the
         // first was left over the water when the boat's area came, fell, and the game went back to the checkpoint before Tikimon
-        static Vector4 carrierWas = {0.0f, 0.0f, 0.0f, 1.0f};
-        static InstanceContext* carrierWasOf = nullptr;
+        Vector4& carrierWas = g_CarrierWas;
+        InstanceContext*& carrierWasOf = g_CarrierWasOf;
         bool jumped = carrierWasOf == carrier && std::fabs(carrier->place->position.x - carrierWas.x) +
                                                          std::fabs(carrier->place->position.y - carrierWas.y) +
                                                          std::fabs(carrier->place->position.z - carrierWas.z) > 25.0f;
@@ -2344,6 +2349,11 @@ bool CheckpointWaitHolds(InstanceContext* checkpoint)
 // players are near each other, the player nearer the instance (who set it off) held still meanwhile; false once they are, with the
 // swap of "the player" undone so the cutscene's commands (locking the player's inputs, switching characters) act on the first
 // player as in a game with one
+namespace
+{
+bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
+}
+
 bool CutsceneWaitHolds(InstanceContext* director)
 {
     GameController* controller = G_GameController;
@@ -2377,12 +2387,15 @@ bool CutsceneWaitHolds(InstanceContext* director)
             // The first rode in the second's backpack: out on the second's spot (where the cutscene was set off)
             EndRide();
         }
-        else if (bySecond && g_Ride.rider < 0 && first->chunk == second->chunk)
+        else if (bySecond && g_Ride.rider < 0)
         {
-            second->place->SyncPosition();
-            Vector4 to = second->place->position;
-            to.y += 0.3f;
-            PutAt(first, to);
+            // Into the second's area first when it's another (the next one: through the link between them, as the game takes a
+            // character through a door). Set off from huba with the first player on the beach, the cutscene showed huba and left
+            // the first player on the beach, its camera away, unable to move (2026-11-11)
+            if (!PutFirstWhereSecond(first, second))
+            {
+                Native::Log("second player: the cutscene's area can't be reached from the first player's: the first stays");
+            }
         }
 
         if (g_Ride.rider < 0 && first->chunk == second->chunk)
@@ -2586,6 +2599,36 @@ bool RidingHidesShadow(const InstanceContext* instance)
 
 namespace
 {
+// The first player put where the second is: across the link between their areas when they're different (the game's own way through
+// a door: the place taken through the link's matrix, the instance into the linked area); false when there's no loaded link
+bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second)
+{
+    if (first == nullptr || second == nullptr || first->place == nullptr || second->place == nullptr || first->chunk == nullptr ||
+        second->chunk == nullptr)
+    {
+        return false;
+    }
+
+    if (first->chunk != second->chunk)
+    {
+        ChunkLinkData* link = FindLinkTo(first->chunk, second->chunk);
+        if (link == nullptr || link->flags.linkedRm2Loaded == 0 || first->ChangeChunk(link) == nullptr ||
+            first->chunk != second->chunk)
+        {
+            return false;
+        }
+
+        Native::Log("second player: the first player taken into the second's area (%s)",
+                    second->chunk->name.string != nullptr ? second->chunk->name.string : "?");
+    }
+
+    second->place->SyncPosition();
+    Vector4 to = second->place->position;
+    to.y += 0.3f;
+    PutAt(first, to);
+    return true;
+}
+
 // When the second player comes out of the first's backpack after a cutscene (0: not waiting to)
 u64 g_OutAfterCutscene = 0;
 // The game went back to a checkpoint: the second player is made again from scratch once play is back
@@ -2610,13 +2653,14 @@ void CameraWatchdog()
         InstanceContext* character = player == 0 ? FirstPlayer() : (Valid() ? g_Second.instance : nullptr);
         InstanceContext* camera = player == 0 ? ViewCamera(controller) : CameraOf(character);
         if (character == nullptr || camera == nullptr || character->place == nullptr || camera->place == nullptr ||
-            camera->chunk != character->chunk || RiderPlayer() == player)
+            RiderPlayer() == player)
         {
             far[player] = 0;
             continue;
         }
 
-        if (DistanceBetween(character->place, camera->place) < 40.0f)
+        // (In another area than its character counts as far: the camera left in huba by a cutscene, 2026-11-11)
+        if (camera->chunk == character->chunk && DistanceBetween(character->place, camera->place) < 40.0f)
         {
             far[player] = 0;
             continue;
