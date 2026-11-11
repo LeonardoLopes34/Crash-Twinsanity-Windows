@@ -255,6 +255,12 @@ u64 g_PaceAt = 0;
 // The last three choices' turns (a picture is shown two frames after its choice) and how many there have been since two views began
 u64 g_Turns[3] = {0, 0, 0};
 u64 g_TurnCount = 0;
+// A frame's start and its work (nanoseconds, a running mean); whether the first window is at the second's rate for now, and since
+// when the work has fitted with room
+u64 g_FrameStart = 0;
+double g_FrameCost = 0.0;
+bool g_Reduced = false;
+u64 g_FitsSince = 0;
 
 // A window's frames a second: the first's 90 (half the 180 Hz screen's refreshes), the second's 60 (Parsec's stream), or
 // $TWIN_P1_FPS and $TWIN_P2_FPS
@@ -1289,7 +1295,43 @@ int TwoViewsFrame()
     if (Wanted())
     {
         u64 now = SDL_GetTicksNS();
-        const u64 periods[2] = {1000000000ull / static_cast<u64>(ViewRate(0)), 1000000000ull / static_cast<u64>(ViewRate(1))};
+        // The first window at the second's rate while a frame's work doesn't fit the two rates together (looking at the chickens by the
+        // nitro at the start, a frame took 6.8 ms of the 6.7 that 90 + 60 leave), its own again once it fits with room for 3 s. The
+        // frame's work: from its start (TakeTwoViewsPace) to here, the render thread's wait in it
+        {
+            const double full = 1e9 / static_cast<double>(ViewRate(0) + ViewRate(1));
+            if (g_FrameStart != 0 && now > g_FrameStart && now - g_FrameStart < 100000000ull)
+            {
+                g_FrameCost = g_FrameCost * 0.95 + static_cast<double>(now - g_FrameStart) * 0.05;
+            }
+
+            if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
+            {
+                g_Reduced = true;
+                g_FitsSince = 0;
+                Native::Log("two players: a frame's work %.1f ms, more than %d + %d leave: window 1 at %d for now", g_FrameCost / 1e6,
+                            ViewRate(0), ViewRate(1), ViewRate(1));
+            }
+            else if (g_Reduced)
+            {
+                if (g_FrameCost < full * 0.75)
+                {
+                    g_FitsSince = g_FitsSince == 0 ? now : g_FitsSince;
+                    if (now - g_FitsSince > 3000000000ull)
+                    {
+                        g_Reduced = false;
+                        Native::Log("two players: a frame's work %.1f ms: window 1 at %d again", g_FrameCost / 1e6, ViewRate(0));
+                    }
+                }
+                else
+                {
+                    g_FitsSince = 0;
+                }
+            }
+        }
+
+        const int firstRate = g_Reduced ? ViewRate(1) : ViewRate(0);
+        const u64 periods[2] = {1000000000ull / static_cast<u64>(firstRate), 1000000000ull / static_cast<u64>(ViewRate(1))};
         static u64 turns[2] = {0, 0};
         if (!on)
         {
@@ -1357,6 +1399,9 @@ unsigned long long TakeTwoViewsPace()
 {
     u64 at = g_PaceAt;
     g_PaceAt = 0;
+    // (When the frame will start: at its turn, or now when that's past; its work measured from there, TwoViewsFrame)
+    u64 now = SDL_GetTicksNS();
+    g_FrameStart = at > now ? at : now;
     return at;
 }
 
@@ -1590,6 +1635,28 @@ void LeashFrame()
         // hubd and pier: 2026-11-11's log)
         bool stepped = second->chunk != nullptr && second->chunk->steppedKinds == ChunkData::EveryKindStepped;
         static bool loggedNeighbour = false;
+        // Off the ground for 3 seconds in the next area: stuck there (in huba the second player hung in the air unable to move for a
+        // minute, 2026-11-11): made again beside the first, in its backpack
+        static u64 airSince = 0;
+        CharacterAgent* secondAgent = AgentOf(second);
+        bool onGround = secondAgent == nullptr || secondAgent->part == nullptr ||
+                        static_cast<CharacterPart*>(secondAgent->part)->flags.onGround != 0;
+        if (stepped && !onGround)
+        {
+            u64 now = SDL_GetTicksNS();
+            airSince = airSince == 0 ? now : airSince;
+            if (now - airSince > 3000000000ull)
+            {
+                airSince = 0;
+                RetireSecond("stuck in the air in the next area");
+                return;
+            }
+        }
+        else
+        {
+            airSince = 0;
+        }
+
         if (stepped)
         {
             g_ApartSince = 0;
@@ -1701,17 +1768,10 @@ void BackpackFrame()
         carrierWasOf = carrier;
         if (g_Ride.rider == 0 && (jumped || carrier->chunk != g_Ride.instance->chunk))
         {
-            InstanceContext* first = g_Ride.instance;
-            ChunkData* fromChunk = g_Ride.fromChunk;
-            Vector4 from = g_Ride.from;
+            // Out where it was last carried to, in its own area: the spot the carrier stood on just before it crossed (sent back to
+            // where it got in, the first player took it for a return to the checkpoint without dying: 2026-11-11)
             EndRide();
-            if (first != nullptr && InstanceLive(first) && first->chunk == fromChunk)
-            {
-                from.y += 0.3f;
-                PutAt(first, from);
-            }
-
-            Native::Log("second player: player 2 left player 1's area (or jumped): player 1 out of the backpack, back where it got in");
+            Native::Log("second player: player 2 left player 1's area (or jumped): player 1 out of the backpack where it was carried to");
             return;
         }
 
