@@ -287,11 +287,20 @@ InstanceContext* ViewCamera(GameController* controller)
     return shown != nullptr ? static_cast<InstanceContext*>(shown->object) : nullptr;
 }
 
+// The first player paired with Cortex on a vehicle (the Rollerbrawl, the ball in the caves; the Humiliskate): nothing for the
+// second player to do there, it rides in the first's backpack and both windows show the first's view
+bool OnVehicle(GameController* controller)
+{
+    u32 pairing = controller != nullptr ? controller->progress.play.pairing : PairingAlone;
+    return pairing == PairingRollerbrawl || pairing == PairingHumiliskate;
+}
+
 // Whether there are two views now (the game shows its own rig most of the time in play, or the played character's follow camera:
 // either is the first view)
 bool TwoViewsOn(GameController* controller, InstanceContext* second, InstanceContext* secondCamera)
 {
-    return Wanted() && controller != nullptr && second != nullptr && secondCamera != nullptr && ViewCamera(controller) != nullptr &&
+    return Wanted() && controller != nullptr && !OnVehicle(controller) && second != nullptr && secondCamera != nullptr &&
+           ViewCamera(controller) != nullptr &&
            controller->State() == GameController::StatePlaying &&
            (controller->states.camera == GameController::CameraFollow ||
             controller->states.camera == GameController::CameraGameRig);
@@ -1763,6 +1772,31 @@ void BackpackFrame()
         {
             stage++;
             pressed[0] = true;
+        }
+    }
+
+    // On a vehicle with Cortex: the second player kept in the first's backpack (it walked about the ball's tunnels, made again at
+    // every area, its camera all over: 2026-11-11)
+    GameController* controller = G_GameController;
+    static u32 pairingWas = 0;
+    if (controller != nullptr && controller->progress.play.pairing != pairingWas)
+    {
+        pairingWas = controller->progress.play.pairing;
+        Native::Log("second player: the pairing is %u%s", pairingWas, OnVehicle(controller) ? " (a vehicle: player 2 rides)" : "");
+    }
+
+    if (OnVehicle(controller) && SecondPlayer() != nullptr)
+    {
+        pressed[0] = false;
+        pressed[1] = false;
+        if (g_Ride.rider == 0)
+        {
+            EndRide();
+        }
+
+        if (g_Ride.rider < 0)
+        {
+            StartRide(1);
         }
     }
 

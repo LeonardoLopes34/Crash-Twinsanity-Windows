@@ -71,6 +71,8 @@ BARCO, PORTAS DE FASE E VIAGENS
   entra e o Jogador 1, com o Jogador 2 na mochila dele. Se o Jogador 2 for sozinho, o jogo pode ficar carregando e voltar
   ao checkpoint.
 - O Jogador 1 nao e mais levado na mochila do Jogador 2 para outra area: ele sai da mochila e volta para onde entrou.
+- Fases em que o Jogador 1 vira veiculo com o Cortex (a bola na caverna, o skate): o Jogador 2 fica na mochila o tempo
+  todo e as duas janelas mostram a camera do Jogador 1.
 - Se o Jogador 2 ja passou para a area vizinha, o Jogador 1 pode entrar na mochila dele mesmo assim: ele e levado
   primeiro para onde o Jogador 2 esta.
 
