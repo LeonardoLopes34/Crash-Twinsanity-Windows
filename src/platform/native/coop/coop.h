@@ -65,6 +65,12 @@ void EndObjectUpdate();
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen
 int TwoViewsFrame();
+// Two players on this PC: when the next frame should start (SDL_GetTicksNS's clock), so each window gets its own even rate (the
+// first's 90 a second, the second's 60: $TWIN_P1_FPS, $TWIN_P2_FPS); 0 when that's not this module's to say (graphics/display.cpp's
+// WaitForVBlank paces as usual then). Taken once: it reads 0 until the next TwoViewsFrame
+unsigned long long TakeTwoViewsPace();
+// The frame rate the two windows' rates make together (the game clock's frames a second), 0 without a second player
+int TwoViewsFrameRate();
 // (TwoViewsFrame's answer while there's one view and a second player's window: the picture shown in both windows)
 constexpr int BothViews = 2;
 // Around the game's drawing (context.cpp's Render): the second player's camera given to the view only for the drawing of its frames,

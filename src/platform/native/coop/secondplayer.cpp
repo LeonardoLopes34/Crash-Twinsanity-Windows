@@ -250,6 +250,24 @@ namespace
 // the second's is lent to the view for a drawing
 int g_Drawing = 0;
 int g_Drawn = 0;
+// When the next frame starts (TwoViewsFrame's choice; 0: as the frame rate paces it)
+u64 g_PaceAt = 0;
+
+// A window's frames a second: the first's 90 (half the 180 Hz screen's refreshes), the second's 60 (Parsec's stream), or
+// $TWIN_P1_FPS and $TWIN_P2_FPS
+int ViewRate(int view)
+{
+    static int rates[2] = {0, 0};
+    if (rates[view] == 0)
+    {
+        const char* variable = std::getenv(view == 0 ? "TWIN_P1_FPS" : "TWIN_P2_FPS");
+        int rate = variable != nullptr ? std::atoi(variable) : 0;
+        rates[view] = rate >= 20 && rate <= 240 ? rate : (view == 0 ? 90 : 60);
+        Native::Log("two players: window %d at %d frames a second", view + 1, rates[view]);
+    }
+
+    return rates[view];
+}
 bool g_Lent = false;
 InstanceContext* g_FirstView = nullptr;
 
@@ -1261,6 +1279,46 @@ int TwoViewsFrame()
 
     int drawn = g_Drawn;
     int next = on ? 1 - g_Drawing : 0;
+    // Each window's own rate (2026-11-11, the players' ask: the first player's screen is 180 Hz, the second's picture goes through
+    // Parsec at 60): the next frame is the view whose turn comes first, and it starts at that turn (TakeTwoViewsPace). Every other
+    // frame, the first window had 60 like the second. The second view's turns a quarter of the first's period after them, so the
+    // two never fall on the same moment
+    if (Wanted())
+    {
+        u64 now = SDL_GetTicksNS();
+        const u64 periods[2] = {1000000000ull / static_cast<u64>(ViewRate(0)), 1000000000ull / static_cast<u64>(ViewRate(1))};
+        static u64 turns[2] = {0, 0};
+        if (!on)
+        {
+            // One view (cutscenes, menus, pauses): the first window's rate, both windows showing it
+            turns[1] = 0;
+            turns[0] = turns[0] == 0 || turns[0] + periods[0] < now ? now : turns[0];
+            g_PaceAt = turns[0];
+            turns[0] += periods[0];
+            next = 0;
+        }
+        else
+        {
+            if (turns[1] == 0)
+            {
+                turns[0] = now;
+                turns[1] = now + periods[0] / 4;
+            }
+
+            for (int view = 0; view < 2; view++)
+            {
+                // Fallen behind (a slow frame, a load): from now on, not a rush of frames to catch up
+                if (turns[view] + periods[view] < now)
+                {
+                    turns[view] = now;
+                }
+            }
+
+            next = turns[0] <= turns[1] ? 0 : 1;
+            g_PaceAt = turns[next];
+            turns[next] += periods[next];
+        }
+    }
 
     // Two views share the frames (each window gets every other one): a rate under 120 is raised to 120 (each window 60), a rate
     // the player chose at 120 or above (144, unlimited) is left alone. It was set to 120 whatever the choice, and saved as it:
@@ -1285,6 +1343,18 @@ int TwoViewsFrame()
     }
 
     return drawn;
+}
+
+unsigned long long TakeTwoViewsPace()
+{
+    u64 at = g_PaceAt;
+    g_PaceAt = 0;
+    return at;
+}
+
+int TwoViewsFrameRate()
+{
+    return Wanted() ? ViewRate(0) + ViewRate(1) : 0;
 }
 
 // The backpack (one world, two characters): either player rides in the other's backpack, its character hidden (ModelDrawn,
@@ -2450,6 +2520,8 @@ namespace
 {
 // When the second player comes out of the first's backpack after a cutscene (0: not waiting to)
 u64 g_OutAfterCutscene = 0;
+// The game went back to a checkpoint: the second player is made again from scratch once play is back
+bool g_FreshAfterRestart = false;
 
 // Once a frame of play: a player's camera that stays far from its character (after Tikimon's fight the first player's view
 // hung over the whole island, until a ride in the backpack set it again) is set again: the third person camera taken over
@@ -2665,6 +2737,14 @@ void SecondPlayerFrame()
         else if (state != GameController::StateWatching && state != GameController::StatePaused &&
                  state != GameController::StateWaiting)
         {
+            // Back to a checkpoint (a death of either): the second player made again from scratch once play is back. Kept, its own
+            // scripts went on with its death after the restart and asked for the checkpoint again every 4.4 s, forever (killed by a
+            // nitro, 2026-11-11's log)
+            if (state == GameController::StateFadingOut || state == GameController::StateRestarting)
+            {
+                g_FreshAfterRestart = true;
+            }
+
             returning = true;
             if (!fromCutscene)
             {
@@ -2740,6 +2820,15 @@ void SecondPlayerFrame()
         }
 
         heldPad = nullptr;
+    }
+
+    if (returning && Valid() && g_FreshAfterRestart)
+    {
+        g_FreshAfterRestart = false;
+        returning = false;
+        playingFrames = 0;
+        RetireSecond("back from a checkpoint: made fresh");
+        return;
     }
 
     if (returning && Valid())

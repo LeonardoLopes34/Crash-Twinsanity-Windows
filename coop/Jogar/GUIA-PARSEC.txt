@@ -97,9 +97,9 @@ MOCHILA
 
 FLUIDEZ
 -------
-- Com dois jogadores o jogo roda a 120 quadros por segundo, 60 para cada janela, mesmo com 144 ou Ilimitado nas opcoes.
-  60 por janela casa com o Parsec (que transmite a 60) e com monitores de 60, 120 e 180 Hz. Com 72 por janela (144) os
-  quadros caiam entre as atualizacoes da tela e do Parsec, e o jogo parecia travado mesmo com o contador alto.
+- Com dois jogadores cada janela tem o proprio ritmo: a do Jogador 1 a 90 quadros por segundo (metade de um monitor de
+  180 Hz) e a do Jogador 2 a 60 (o que o Parsec transmite). A opcao de taxa de atualizacao do menu nao vale nesse modo.
+- Para mudar: TWIN_P1_FPS e TWIN_P2_FPS no .bat (por exemplo, set TWIN_P1_FPS=60 num monitor de 60 Hz).
 
 SENSIBILIDADE DO MOUSE
 ----------------------

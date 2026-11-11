@@ -1398,7 +1398,25 @@ void WaitForVBlank()
             g_GameWorkFrom = std::chrono::steady_clock::now();
         }
     } restart;
-    if (!g_Paced || g_FrameRate < 0)
+    if (!g_Paced)
+    {
+        return;
+    }
+
+    // Two players on this PC: the frame starts at its window's turn (coop/secondplayer.cpp: each window its own even rate)
+    if (const u64 turn = Coop::TakeTwoViewsPace(); turn != 0)
+    {
+        const u64 now = SDL_GetTicksNS();
+        if (turn > now && turn - now < 100000000ull)
+        {
+            SDL_DelayPrecise(turn - now);
+        }
+
+        g_BlankStarted = false;
+        return;
+    }
+
+    if (g_FrameRate < 0)
     {
         return;
     }

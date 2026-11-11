@@ -474,17 +474,20 @@ s32 FrameRate()
     // 72 a window (144) on the 180 Hz screen and through Parsec's 60 fell between their refreshes, and unlimited came unevenly:
     // the players felt it as lag where the counter said 140 (2026-11-11's log). $TWIN_P2_KEEP_RATE keeps the option's
     static const bool keep = std::getenv("TWIN_P2_KEEP_RATE") != nullptr;
-    if (!keep && (rate == 0 || rate > 120) && Coop::SecondPlayerWanted())
+    // (Each window's own rate since 2026-11-11: the first's 90 and the second's 60 together, coop/secondplayer.cpp's TwoViewsFrame
+    // pacing them)
+    if (!keep && Coop::SecondPlayerWanted())
     {
+        s32 both = Coop::TwoViewsFrameRate();
         static bool logged = false;
         if (!logged)
         {
             logged = true;
-            Native::Log("two players: %s chosen, 120 frames a second played (60 for each window)",
-                        rate == 0 ? "unlimited" : "144");
+            Native::Log("two players: %d frames a second played, each window at its own rate (the option's %s set aside)", both,
+                        rate == 0 ? "unlimited" : std::to_string(rate).c_str());
         }
 
-        return 120;
+        return both;
     }
 
     return rate;
