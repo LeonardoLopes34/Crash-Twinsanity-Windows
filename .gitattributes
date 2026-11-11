@@ -4,3 +4,6 @@
 # GitHub's language bar: the level recipes are C++ and splat's include files assembler macros (read as PHP and BitBake)
 src/platform/native/levelrecipes.inc linguist-language=C++
 include/*.inc linguist-language=Assembly
+
+# Windows batch files keep CRLF (cmd misreads some LF-only scripts)
+*.bat text eol=crlf

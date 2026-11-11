@@ -1,3 +1,5 @@
+> **Este fork tem o mod de dois jogadores (Crash Twinsanity Co-op)** no branch `coop-online`: veja [coop/README.md](coop/README.md). O resto deste README é o do port original.
+
 <div align="center">
 
 # Crash Twinsanity for Windows

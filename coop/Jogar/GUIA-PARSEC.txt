@@ -1,0 +1,117 @@
+CRASH TWINSANITY - DOIS JOGADORES PELO PARSEC
+=============================================
+
+Um mundo so, rodando no PC do host. Cada jogador tem a propria janela e a propria camera.
+O amigo NAO precisa do jogo, da ISO nem deste zip: so do Parsec e de um controle.
+
+NO PC DO HOST (UMA VEZ SO)
+--------------------------
+1. Monitor virtual (para a janela do Jogador 2 ter um "monitor" so dela):
+   - Instale o "Virtual Display Driver" (gratis), da pagina de releases do GitHub do projeto VirtualDrivers.
+   - Depois de instalar, o Windows passa a ter um segundo monitor (Configuracoes > Sistema > Tela).
+   - Deixe ele em 1920x1080 e 60 Hz, em "Estender estas telas".
+   - Se voce tiver um segundo monitor de verdade, pode usar ele no lugar.
+2. Parsec: instale (parsec.app), crie a conta e entre.
+   - Configuracoes > Host > Hosting: ligado.
+   - Configuracoes > Host > Display (Monitor): escolha o MONITOR VIRTUAL (o segundo).
+     Assim o amigo ve so a tela do Jogador 2, e nao a sua.
+
+NO PC DO AMIGO
+--------------
+1. Instale o Parsec, crie a conta e entre.
+2. Ligue o controle no PC dele.
+3. Voces se adicionam como amigos no Parsec (ou o host manda um link de convite).
+
+PARA JOGAR
+----------
+1. Host: abra "DOIS JOGADORES (Parsec).bat".
+   Abrem duas janelas: a sua e a "Crash Twinsanity - Jogador 2", que vai sozinha para o segundo monitor em tela cheia.
+2. Amigo: conecta no host pelo Parsec.
+3. Host: na janela do Parsec que aparece quando ele conecta, deixe para o convidado SO o controle (Gamepad) ligado,
+   e desligue teclado e mouse dele (senao ele mexe no seu mouse).
+4. Controles:
+   - So o controle do amigo ligado no seu PC: ele e o Jogador 2, e voce joga no TECLADO.
+   - Voce tambem com controle: o primeiro controle e seu, o segundo e dele.
+5. Comecem um jogo novo ou carreguem o seu save. O segundo Crash aparece ao lado do seu na fase.
+
+MOCHILA
+-------
+- Botao SELECT do controle (no Xbox: o botao "View"/"Back", o das duas janelinhas), OU os dois gatilhos de cima juntos
+  (L1 + R1). No teclado: F5. Funciona pros dois: o Jogador 2 entra na mochila do 1 e o 1 entra na do 2.
+- Quem aperta entra na mochila do outro: some da tela e e carregado junto, sem controle.
+- Apertar de novo (qualquer um dos dois) sai da mochila, do lado de quem carregava.
+- O Jogador 2 (Crash verde) nasce sempre dentro da mochila do Jogador 1: ao entrar na fase, depois de morrer
+  e depois de cutscene. Aperta SELECT pra sair.
+
+DISTANCIA
+---------
+- Se voces se afastarem demais, as bordas das duas telas ficam vermelhas e piscando (mais forte perto do limite).
+- Passou do limite (300): o Jogador 2 vai direto pra mochila do Jogador 1. O aviso comeca em 220.
+
+PING
+----
+- Jogador 1: clique no BOTAO DO MEIO do mouse (a rodinha). Jogador 2: aperte o analogico direito (R3).
+- Marca o ponto que a sua camera esta olhando. Aparece nas duas telas por 7 segundos, em perspectiva: um anel no chao,
+  um feixe e um losango que ficam menores quanto mais longe, com um "plim" curto.
+- Fora da tela, o anel fica na borda do lado em que o ponto esta.
+
+VER A TELA DO OUTRO
+-------------------
+- Jogador 1: tecla V. Jogador 2: aperte o analogico esquerdo (L3). Liga/desliga uma miniatura da tela do outro no canto
+  de baixo, a direita, da sua janela.
+
+CUTSCENE
+--------
+- Uma cutscene so comeca quando os dois jogadores estao perto um do outro (30) ou um esta na mochila do outro.
+  Quem disparou fica parado com o aviso embaixo (X / B solta o boneco). Depois da cutscene ninguem entra na mochila:
+  o Jogador 2 volta pro lugar onde estava, ou pro lado do Jogador 1 se a cutscene levou o Jogador 1 pra longe.
+- Durante a cutscene o Jogador 2 fica parado e sem colisao.
+
+AREAS DO MAPA
+-------------
+- Cada area do mapa tem coordenadas proprias. Se os dois ficarem em areas diferentes por mais de 4 segundos, o Jogador 2
+  e refeito na area do Jogador 1, dentro da mochila. A distancia (coleira) so conta na mesma area.
+
+MINIMAPA
+--------
+- Um circulo no canto de cima, a direita, de cada janela. Gira com a sua camera (pra cima e onde voce olha).
+  Seta laranja = voce, bolinha verde com borda branca = o outro jogador (fica na borda se estiver longe),
+  vermelho = inimigos, marrom = caixas, amarelo = frutas, azul = outros personagens, anel laranja = ping.
+- Jogador 1: tecla M liga/desliga. Jogador 2: seta pra cima do direcional.
+
+CHECKPOINT
+----------
+- So vale quando os dois estao perto dele (15 de alcance). Quem chega primeiro fica parado esperando.
+- Pra cancelar a espera e andar de novo: tecla X (Jogador 1) ou B (Jogador 2). Ao voltar pro alcance, ele pede de novo.
+
+MOCHILA
+-------
+- Quem esta dentro nao conta no mundo (inimigos, Cortex, frutas) e ve exatamente a camera de quem carrega.
+- Depois de uma cutscene o Jogador 2 so entra na mochila se ficou longe do Jogador 1.
+
+FLUIDEZ
+-------
+- Pra aproveitar o monitor de 200 Hz: Opcoes > Taxa de atualizacao > Ilimitado. As duas janelas se revezam (cada uma
+  fica com metade dos quadros), entao ilimitado da o maximo pra cada uma.
+
+SENSIBILIDADE DO MOUSE
+----------------------
+- Opcoes > Controles > Sensibilidade do mouse: agora vai de 0.1 ate 10 (0.1 em 0.1 ate 1, depois 1.5, 2, 2.5...). 5.0 e o padrao.
+
+CAMERA
+------
+- Camera de terceira pessoa: analogico direito (ou mouse, pro Jogador 1) gira em volta do Crash.
+- Ela fica onde voce deixar, nao gira sozinha e nao atravessa parede.
+- F7 volta pra camera original do jogo (e de novo F7 pra camera nova).
+
+DICAS
+-----
+- Cabo de rede ajuda muito no atraso (Parsec gosta de conexao estavel).
+- Nao arraste o mouse para o monitor virtual enquanto joga.
+- Fechar qualquer uma das duas janelas fecha o jogo.
+- O jogo passa a rodar a 120 quadros por segundo (cada janela fica com ~60). Da para voltar no menu de opcoes.
+
+AINDA EM TESTE
+--------------
+- Partes do jogo que so enxergam o Jogador 1 (alguns inimigos, cutscenes, troca de fase).
+- O segundo Crash some ao carregar outra fase ou voltar ao checkpoint e reaparece ao lado do primeiro.

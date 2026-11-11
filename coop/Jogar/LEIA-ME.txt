@@ -1,0 +1,67 @@
+CRASH TWINSANITY - CO-OP ONLINE (versao de teste)
+==================================================
+
+Cada um joga no proprio PC, com a propria tela, e os dois ficam no mesmo mundo.
+
+O QUE CADA UM PRECISA
+---------------------
+1. Esta pasta inteira.
+2. A propria ISO do jogo, versao PAL europeia (SLES-52568). Na primeira vez o jogo pede o arquivo e lembra dele.
+3. Radmin VPN (gratis): https://www.radmin-vpn.com
+   - Um cria uma rede (Rede > Criar rede, com nome e senha), o outro entra nela (Rede > Entrar em rede).
+   - O IP de cada um aparece no Radmin, comecando com 26.
+4. Windows: se aparecer "O Windows protegeu o computador", clique em "Mais informacoes" > "Executar assim mesmo".
+   Se o "Smart App Control" bloquear o jogo, ele precisa ser desligado em Seguranca do Windows >
+   Controle de aplicativo e navegador.
+
+PASSO A PASSO
+-------------
+1. (Opcional, recomendado) Testar a conexao sem abrir o jogo:
+   - Os dois abrem "TESTAR CONEXAO.bat".
+   - Quem hospeda escolhe 1. O outro escolhe 2 e digita o IP do Radmin de quem hospeda.
+   - Se aparecer "conectado a ... ping XX ms" nos dois, esta tudo certo.
+   - IMPORTANTE: FECHE as janelas do teste antes de abrir o jogo (o teste usa a mesma porta do jogo).
+     Se esquecer, o jogo mostra "porta ocupada" embaixo da tela e conecta sozinho assim que o teste for fechado.
+2. Quem hospeda abre "HOST - Jogador 1.bat".
+   Na primeira vez o Firewall do Windows pergunta: marque redes PRIVADAS e PUBLICAS e clique em Permitir.
+3. O outro abre "ENTRAR - Jogador 2.bat" e digita o IP do Radmin de quem hospeda.
+4. Os dois comecam o jogo (Novo jogo ou o mesmo save). Na praia, cada um ve o Crash do outro.
+
+TECLAS DO CO-OP
+---------------
+F5 ou Select (ou L1+R1)  entra / sai da mochila do parceiro (some, e vai junto com ele inclusive atravessando portas/areas)
+F6                       quando um esta esperando o outro numa cutscene: puxa o parceiro ate voce, ou vai ate ele
+F7                       liga / desliga a CAMERA LIVRE 3a PESSOA (vem ligada): a camera so gira quando VOCE gira (analogico
+                         direito ou mouse), nao volta sozinha para tras do Crash e ignora os angulos forcados das fases.
+                         L1/R1 trazem ela para tras do Crash. Na prancha, na bola de neve e no hoverboard a camera original continua.
+M ou D-Pad Cima          liga / desliga o MINIMAPA no canto da tela (mostra o outro jogador, inimigos, caixas, frutas e ping)
+Botao do meio do mouse   marca um ponto no mundo (PING 3D com aviso sonoro) que aparece na tela e no minimapa dos dois jogadores
+ou R3 (apertar analogico direito)
+
+O QUE JA FUNCIONA (MODO RADMIN VPN - 1 JANELA POR PC, 100% FPS)
+---------------------------------------------------------------
+- Cada PC abre apenas 1 janela e renderiza apenas 1 visao (sem queda de FPS de abrir 2 jogos ou dividir renderizacao).
+- Os 2 Crashes existem por completo no mundo e interagem com o cenario e entre si:
+  * Cada PC roda o mundo do proprio Crash: inimigos, minhocas, botoes e gatilhos reagem a quem esta naquele PC.
+    Os golpes do parceiro em caixas, inimigos e objetos, as frutas, os checkpoints e as cutscenes sao copiados pela rede.
+  * Colisao fisica entre os 2 Crashes: empurrao lateral no chao e golpes (giro, rasteira, barrigada) que lancam o parceiro.
+  * Jogador 2 com cor diferenciada (Crash Verde).
+  * Sem Game Over quando as vidas chegam a zero no co-op (as vidas voltam para 3 e o jogo retorna ao ultimo checkpoint).
+- Mochila (F5 / Select / L1+R1) nos dois sentidos, atravessando portas e carregamentos de area junto com quem carrega.
+- Se quem carrega morrer, quem esta na mochila volta ao checkpoint junto.
+- Checkpoints quebrados por qualquer um dos dois jogadores atualizam o ponto de renascimento nos dois PCs.
+- Pausa compartilhada: quem pausa, pausa os dois. So quem pausou pode despausar.
+- Cutscenes esperam os dois chegarem ("Aguardando ...") e comecam juntas.
+- Golpes em caixas, estatuas, objetos e inimigos acontecem em tempo real nos dois PCs (mesmo longe da camera local).
+- Frutas, joias e cristais: o que um pega, o outro ganha, e some do mundo dele.
+- O jogo nao pausa quando voce troca de janela.
+
+O QUE AINDA E DE TESTE
+----------------------
+- Os dois precisam da MESMA versao do jogo. Se forem diferentes, aparece embaixo da tela "o outro jogo e de outra versao"
+  e eles nao se conectam: os dois baixam o zip mais novo.
+- Cada um ainda comeca do proprio save (entrar no save do host vem depois).
+- Inimigos andam de forma diferente em cada jogo (so os golpes sao copiados).
+- Caixas que explodem (TNT/nitro) podem soltar frutas nos dois jogos.
+- Se voces estiverem em areas diferentes, quem esta na mochila nao acompanha.
+- Se algo travar, mande o arquivo log.txt de %APPDATA%\Crash Twinsanity

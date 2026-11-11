@@ -36,3 +36,14 @@ desktop.ini
 
 # FFmpeg's source release (native/tools/build_ffmpeg.sh downloads and builds it; see native/third_party/ffmpeg/README.md)
 /native/third_party/ffmpeg-src/
+
+# Co-op mod (coop/): the play folder's built files and local logs
+/coop/Jogar/*.exe
+/coop/Jogar/*.dll
+/coop/Jogar/fonts/
+/coop/Jogar/diagnostico.txt
+/coop/Jogar/log_*.txt
+/coop/Jogar/options_copia.txt
+/coop/*.zip
+/compilar_log.txt
+/.venv-antigo-do-D/
