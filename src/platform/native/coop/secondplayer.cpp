@@ -1721,6 +1721,8 @@ void LeashFrame()
     g_Leash = distance <= WarnAt ? 0.0f : (distance - WarnAt) / (LimitAt - WarnAt);
 }
 
+bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
+
 void BackpackFrame()
 {
     g_Leash = 0.0f;
@@ -1832,6 +1834,15 @@ void BackpackFrame()
     {
         if (pressed[player])
         {
+            // Player 1 into the backpack of a player 2 already in the next area: taken there first, as for a cutscene (the ride let
+            // it out the same frame, the areas differing: by the caves' two natives, 2026-11-11)
+            if (player == 0 && FirstPlayer() != nullptr && SecondPlayer() != nullptr &&
+                FirstPlayer()->chunk != SecondPlayer()->chunk && !PutFirstWhereSecond(FirstPlayer(), SecondPlayer()))
+            {
+                Native::Log("second player: player 2's area can't be reached from player 1's: no ride");
+                return;
+            }
+
             StartRide(player);
             return;
         }
@@ -2358,11 +2369,6 @@ bool CheckpointWaitHolds(InstanceContext* checkpoint)
 // players are near each other, the player nearer the instance (who set it off) held still meanwhile; false once they are, with the
 // swap of "the player" undone so the cutscene's commands (locking the player's inputs, switching characters) act on the first
 // player as in a game with one
-namespace
-{
-bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
-}
-
 bool CutsceneWaitHolds(InstanceContext* director)
 {
     GameController* controller = G_GameController;
