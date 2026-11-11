@@ -1299,6 +1299,9 @@ struct Ride
     InstanceContext* instance = nullptr;
     GamePad* pad = nullptr;
     u32 collision = 0;
+    // Where the rider got in (its area and place): the first player is put back there when the carrier leaves its area
+    ChunkData* fromChunk = nullptr;
+    Vector4 from = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 Ride g_Ride;
 // When a ride last started or ended: a press within a moment of it is ignored (the log showed ten changes a second at a boss)
@@ -1349,6 +1352,13 @@ void StartRide(int rider)
     g_Ride.instance = instance;
     g_Ride.pad = controls->pad;
     g_Ride.collision = instance->flags.collisionActive;
+    g_Ride.fromChunk = instance->chunk;
+    if (instance->place != nullptr)
+    {
+        instance->place->SyncPosition();
+        g_Ride.from = instance->place->position;
+    }
+
     controls->pad = nullptr;
     instance->flags.collisionActive = 0;
     agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -1578,10 +1588,36 @@ void BackpackFrame()
         }
 
         InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
-        if (carrier->chunk == g_Ride.instance->chunk)
+        carrier->place->SyncPosition();
+        // The carrier's place jumped (another area's numbers, a teleport) or it left the area: the first player isn't carried
+        // there. The game loads the world around the first player only: carried with the second onto the boat to the Ice Lab, the
+        // first was left over the water when the boat's area came, fell, and the game went back to the checkpoint before Tikimon
+        static Vector4 carrierWas = {0.0f, 0.0f, 0.0f, 1.0f};
+        static InstanceContext* carrierWasOf = nullptr;
+        bool jumped = carrierWasOf == carrier && std::fabs(carrier->place->position.x - carrierWas.x) +
+                                                         std::fabs(carrier->place->position.y - carrierWas.y) +
+                                                         std::fabs(carrier->place->position.z - carrierWas.z) > 25.0f;
+        carrierWas = carrier->place->position;
+        carrierWasOf = carrier;
+        if (g_Ride.rider == 0 && (jumped || carrier->chunk != g_Ride.instance->chunk))
+        {
+            InstanceContext* first = g_Ride.instance;
+            ChunkData* fromChunk = g_Ride.fromChunk;
+            Vector4 from = g_Ride.from;
+            EndRide();
+            if (first != nullptr && InstanceLive(first) && first->chunk == fromChunk)
+            {
+                from.y += 0.3f;
+                PutAt(first, from);
+            }
+
+            Native::Log("second player: player 2 left player 1's area (or jumped): player 1 out of the backpack, back where it got in");
+            return;
+        }
+
+        if (carrier->chunk == g_Ride.instance->chunk && !jumped)
         {
             g_ApartSince = 0;
-            carrier->place->SyncPosition();
             PutAt(g_Ride.instance, carrier->place->position);
         }
         else
@@ -2393,6 +2429,55 @@ namespace
 // When the second player comes out of the first's backpack after a cutscene (0: not waiting to)
 u64 g_OutAfterCutscene = 0;
 
+// Once a frame of play: a player's camera that stays far from its character (after Tikimon's fight the first player's view
+// hung over the whole island, until a ride in the backpack set it again) is set again: the third person camera taken over
+// afresh, and the game's follow camera shown again if that wasn't enough
+void CameraWatchdog()
+{
+    GameController* controller = G_GameController;
+    if (controller == nullptr || controller->State() != GameController::StatePlaying || !FreeCamera())
+    {
+        return;
+    }
+
+    static int far[2] = {0, 0};
+    for (int player = 0; player < 2; player++)
+    {
+        InstanceContext* character = player == 0 ? FirstPlayer() : (Valid() ? g_Second.instance : nullptr);
+        InstanceContext* camera = player == 0 ? ViewCamera(controller) : CameraOf(character);
+        if (character == nullptr || camera == nullptr || character->place == nullptr || camera->place == nullptr ||
+            camera->chunk != character->chunk || RiderPlayer() == player)
+        {
+            far[player] = 0;
+            continue;
+        }
+
+        if (DistanceBetween(character->place, camera->place) < 40.0f)
+        {
+            far[player] = 0;
+            continue;
+        }
+
+        far[player]++;
+        if (far[player] == 90)
+        {
+            g_Orbits[player].camera = nullptr;
+            Native::Log("camera: player %d's camera far from its character for a moment: the third person camera set again",
+                        player + 1);
+        }
+        else if (far[player] == 180)
+        {
+            far[player] = 0;
+            if (player == 0)
+            {
+                ShowCamera(controller, GameController::CameraFollow, 1);
+                g_Orbits[0].camera = nullptr;
+                Native::Log("camera: player 1's camera still far: the game's follow camera shown again");
+            }
+        }
+    }
+}
+
 // Once a frame of play: each player's pad on its own character, and "the player" the first's out of the world's steps. After
 // Tikimon's fight the first player's pad was on the second's character and the first stood still: whatever moved them, it's put
 // back here (and logged)
@@ -2731,6 +2816,7 @@ void SecondPlayerFrame()
         }
 
         KeepPlayersApart();
+        CameraWatchdog();
         BackpackFrame();
         return;
     }

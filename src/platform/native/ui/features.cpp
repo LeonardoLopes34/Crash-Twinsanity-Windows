@@ -7,6 +7,7 @@
 #include "graphics/presenter.h"
 #include "audio/volumes.h"
 #include "graphics/display.h"
+#include "coop/coop.h"
 
 #include "game/clock.h"
 #include "game/controllers.h"
@@ -468,7 +469,25 @@ s32 FramesPerSecond(s32 retail)
 
 s32 FrameRate()
 {
-    return FrameRates[std::clamp(GetOption(OptionRefresh60), 0, 4)];
+    s32 rate = FrameRates[std::clamp(GetOption(OptionRefresh60), 0, 4)];
+    // Two players on this PC (two windows, the frames shared out between them): 144 and "unlimited" are 120, 60 for each window.
+    // 72 a window (144) on the 180 Hz screen and through Parsec's 60 fell between their refreshes, and unlimited came unevenly:
+    // the players felt it as lag where the counter said 140 (2026-11-11's log). $TWIN_P2_KEEP_RATE keeps the option's
+    static const bool keep = std::getenv("TWIN_P2_KEEP_RATE") != nullptr;
+    if (!keep && (rate == 0 || rate > 120) && Coop::SecondPlayerWanted())
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            Native::Log("two players: %s chosen, 120 frames a second played (60 for each window)",
+                        rate == 0 ? "unlimited" : "144");
+        }
+
+        return 120;
+    }
+
+    return rate;
 }
 
 u32 GameTicks(f32 seconds, f32* carried)

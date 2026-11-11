@@ -62,10 +62,15 @@ VER A TELA DO OUTRO
 
 CUTSCENE
 --------
-- Uma cutscene so comeca quando os dois jogadores estao perto um do outro (30) ou um esta na mochila do outro.
-  Quem disparou fica parado com o aviso embaixo (X / B solta o boneco). Depois da cutscene ninguem entra na mochila:
-  o Jogador 2 volta pro lugar onde estava, ou pro lado do Jogador 1 se a cutscene levou o Jogador 1 pra longe.
-- Durante a cutscene o Jogador 2 fica parado e sem colisao.
+- A cutscene comeca na hora, sem esperar. O Jogador 2 vai para a mochila do Jogador 1 durante ela e sai ao lado dele
+  um segundo depois que o jogo volta.
+
+BARCO, PORTAS DE FASE E VIAGENS
+-------------------------------
+- O jogo carrega o mundo em volta do Jogador 1. Para pegar o barco (por exemplo, para o Ice Lab) ou entrar numa fase, quem
+  entra e o Jogador 1, com o Jogador 2 na mochila dele. Se o Jogador 2 for sozinho, o jogo pode ficar carregando e voltar
+  ao checkpoint.
+- O Jogador 1 nao e mais levado na mochila do Jogador 2 para outra area: ele sai da mochila e volta para onde entrou.
 
 AREAS DO MAPA
 -------------
@@ -91,8 +96,9 @@ MOCHILA
 
 FLUIDEZ
 -------
-- Pra aproveitar o monitor de 200 Hz: Opcoes > Taxa de atualizacao > Ilimitado. As duas janelas se revezam (cada uma
-  fica com metade dos quadros), entao ilimitado da o maximo pra cada uma.
+- Com dois jogadores o jogo roda a 120 quadros por segundo, 60 para cada janela, mesmo com 144 ou Ilimitado nas opcoes.
+  60 por janela casa com o Parsec (que transmite a 60) e com monitores de 60, 120 e 180 Hz. Com 72 por janela (144) os
+  quadros caiam entre as atualizacoes da tela e do Parsec, e o jogo parecia travado mesmo com o contador alto.
 
 SENSIBILIDADE DO MOUSE
 ----------------------
