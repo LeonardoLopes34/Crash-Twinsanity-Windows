@@ -1505,18 +1505,40 @@ void LeashFrame()
     // is made again beside the first; a moment of it is the walk across a door, which the game itself carries it through
     if (first->chunk != second->chunk)
     {
+        // A neighbouring area the game steps in full (the areas next to the first player's: its loader steps every node kind
+        // there) is play as usual: the second player walks on there, no leash (the areas' numbers can't be compared). Only an area
+        // the game doesn't step in full (further away, or let go) makes it again beside the first, a moment later. (Made again
+        // after 4 seconds in any other area, the second player was taken to the backpack walking across the hub's beach, hubc,
+        // hubd and pier: 2026-11-11's log)
+        bool stepped = second->chunk != nullptr && second->chunk->steppedKinds == ChunkData::EveryKindStepped;
+        static bool loggedNeighbour = false;
+        if (stepped)
+        {
+            g_ApartSince = 0;
+            if (!loggedNeighbour)
+            {
+                loggedNeighbour = true;
+                Native::Log("second player: in the next area (%s; the first in %s): plays on",
+                            second->chunk->name.string != nullptr ? second->chunk->name.string : "?",
+                            first->chunk != nullptr && first->chunk->name.string != nullptr ? first->chunk->name.string : "none");
+            }
+
+            return;
+        }
+
+        loggedNeighbour = false;
         u64 now = SDL_GetTicksNS();
         if (g_ApartSince == 0)
         {
             g_ApartSince = now;
-            Native::Log("second player: in another area than the first (%s and %s)",
+            Native::Log("second player: in an area the game doesn't step (%s and %s)",
                         second->chunk != nullptr && second->chunk->name.string != nullptr ? second->chunk->name.string : "none",
                         first->chunk != nullptr && first->chunk->name.string != nullptr ? first->chunk->name.string : "none");
         }
-        else if (now - g_ApartSince > 4000000000ull)
+        else if (now - g_ApartSince > 2000000000ull)
         {
             g_ApartSince = 0;
-            RetireSecond("in another area for 4 seconds");
+            RetireSecond("in an area the game doesn't step");
         }
 
         return;

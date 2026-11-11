@@ -74,8 +74,9 @@ BARCO, PORTAS DE FASE E VIAGENS
 
 AREAS DO MAPA
 -------------
-- Cada area do mapa tem coordenadas proprias. Se os dois ficarem em areas diferentes por mais de 4 segundos, o Jogador 2
-  e refeito na area do Jogador 1, dentro da mochila. A distancia (coleira) so conta na mesma area.
+- O mapa e dividido em areas (praia, hubc, hubd, pier...). O Jogador 2 pode andar livremente nas areas vizinhas a do
+  Jogador 1. So se ele for para uma area mais longe, que o jogo nao esta rodando, ele volta para a mochila do Jogador 1
+  (2 segundos depois). A distancia (coleira) so conta na mesma area.
 
 MINIMAPA
 --------
