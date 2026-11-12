@@ -546,6 +546,54 @@ SDL_Window* g_PresentTarget = nullptr;
 // Pictures shown in the second player's window (the black wait is drawn while this doesn't grow)
 u32 g_SecondPresented = 0;
 
+// Where a window's present goes (2026-11-11, two windows on one context: the presents were 42% of the game's thread), logged every
+// 60 s: each window's pictures and, a picture, the context made current on it, the drawing (with the overlay) and the swap
+u64 PresentClockNow()
+{
+    return static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void NotePresentTimes(int window, u64 switched, u64 drawn, u64 swapped)
+{
+    struct Times
+    {
+        u64 pictures = 0;
+        u64 switched = 0;
+        u64 drawn = 0;
+        u64 swapped = 0;
+    };
+    static Times times[2];
+    static u64 since = 0;
+    Times& now = times[window == 1 ? 1 : 0];
+    now.pictures++;
+    now.switched += switched;
+    now.drawn += drawn;
+    now.swapped += swapped;
+    const u64 at = PresentClockNow();
+    if (since == 0)
+    {
+        since = at;
+        return;
+    }
+
+    if (at - since < 60000000000ull)
+    {
+        return;
+    }
+
+    auto ms = [](u64 total, u64 count) { return count != 0 ? static_cast<double>(total) / static_cast<double>(count) / 1e6 : 0.0; };
+    Native::Log("present: window 1 %llu pictures (the context made current %.2f ms, drawn %.2f ms, swapped %.2f ms a picture), "
+                "window 2 %llu (%.2f, %.2f, %.2f ms)",
+                static_cast<unsigned long long>(times[0].pictures), ms(times[0].switched, times[0].pictures),
+                ms(times[0].drawn, times[0].pictures), ms(times[0].swapped, times[0].pictures),
+                static_cast<unsigned long long>(times[1].pictures), ms(times[1].switched, times[1].pictures),
+                ms(times[1].drawn, times[1].pictures), ms(times[1].swapped, times[1].pictures));
+    times[0] = Times();
+    times[1] = Times();
+    since = at;
+}
+
 // The window a view's frames go to (the second player's made when it's first wanted)
 SDL_Window* WindowForView(int view)
 {
@@ -624,12 +672,18 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
 {
     Presenter& p = g_Presenter;
     Gl& gl = p.gl;
-    // The second player's window drawn with the same context, made current on it for this picture
+    // The second player's window drawn with the same context, made current on it for this picture. Left current on the window it
+    // drew last, made current again only when the target changes (it was made current on the second window and back on the first
+    // for each of its pictures: the presents took 42% of the game's thread in the two players' profile, 2026-11-11)
     SDL_Window* target = g_PresentTarget != nullptr ? g_PresentTarget : p.window;
-    if (target != p.window)
+    const int timedWindow = target != p.window ? 1 : 0;
+    const u64 presentStart = PresentClockNow();
+    if (SDL_GL_GetCurrentWindow() != target || SDL_GL_GetCurrentContext() != p.context)
     {
         SDL_GL_MakeCurrent(target, p.context);
     }
+
+    const u64 presentSwitched = PresentClockNow();
 
     s32 width = 0;
     s32 height = 0;
@@ -930,12 +984,15 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
     }
 
     WriteWindowShot(width, height);
+    const u64 presentDrawn = PresentClockNow();
     SDL_GL_SwapWindow(target);
+    const u64 presentSwapped = PresentClockNow();
     if (target != p.window)
     {
         g_SecondPresented++;
-        SDL_GL_MakeCurrent(p.window, p.context);
     }
+
+    NotePresentTimes(timedWindow, presentSwitched - presentStart, presentDrawn - presentSwitched, presentSwapped - presentDrawn);
 }
 
 void Present(const NativeGraphics::Picture& picture)
