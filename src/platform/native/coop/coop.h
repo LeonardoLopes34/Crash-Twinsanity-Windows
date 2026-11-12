@@ -7,6 +7,8 @@ struct BehaviourRunner;
 struct BehaviourLevel;
 struct ModelNode;
 struct InstanceContext;
+struct Reference;
+struct ChunkData;
 struct GraphState;
 struct Matrix4x4;
 struct Vector4;
@@ -48,6 +50,10 @@ extern bool g_SpawningSecondPlayer;
 bool SecondPlayerWanted();
 // The second player's character (none while it isn't in play)
 InstanceContext* SecondPlayer();
+// A reference to the second player on foot in the world, for the chunk loading to follow the links from its chunk too
+// (chunkloading.cpp: the world around both players loaded and stepped). None online, while it rides in the backpack or isn't
+// in play, and with $TWIN_ONE_FOCUS (the world around the first player only, as before)
+Reference* SecondPlayerReference();
 // The character an instance's sight and aim go to (conditionchecks.cpp: enemies looking for the player): the nearer of the two
 // players on foot (the played one when there's no second, or the second rides in the backpack)
 InstanceContext* NearerPlayer(InstanceContext* from, InstanceContext* played);
@@ -61,6 +67,10 @@ void BeginObjectUpdate(InstanceContext* owner);
 // point, the listener the first player's camera; under 1 when the second player's camera is nearer (the sound's place in the
 // listener's space scaled by it: as loud as it is to the nearer of the two)
 float SoundNearness(const Vector4* at, InstanceContext* listener);
+// The camera that hears a sound in a chunk other than the listener's (soundobjects.cpp): the second player's, when the sound is in
+// the area its camera is in (its jumps and spins, what's around it far from the first player: they were silent, the first
+// camera's view never drawing that area). None otherwise: the listener hears it as before
+InstanceContext* SecondEarFor(ChunkData* chunk, InstanceContext* listener);
 void EndObjectUpdate();
 // Once a frame as it's handed to be shown (graphics/display.cpp's ShowFrame): which player's view the frame just drawn is (0 the
 // first's, 1 the second's: the second window), the next frame's camera chosen

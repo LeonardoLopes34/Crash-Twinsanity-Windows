@@ -23,6 +23,7 @@
 #include "retail/libc.h"
 
 #ifdef TWIN_NATIVE
+#include "coop/coop.h"
 #include "native.h"
 
 #include "game/disk.h"
@@ -439,6 +440,70 @@ extern "C"
             if (manager->focusLoader != nullptr)
             {
                 LoadLinkedChunks(manager->focusLoader, manager->frame, 0, 0);
+#ifdef TWIN_NATIVE
+                // Two players: the links followed from the second player's chunk too, the same frame, so the world around both
+                // is loaded and stepped (a chunk reached from both keeps the lower depth). The game's one focus left as it is
+                // (the progress, the camera and the conditions on the focus chunk still read it); the link hulls are tested
+                // with the second player's position while its own links are followed
+                Reference* second = manager == G_ChunkLoadingManager_ ? Coop::SecondPlayerReference() : nullptr;
+                ChunkLoader* secondLoader = second != nullptr ? FindChunkLoaderOf(manager, second->object) : nullptr;
+                if (secondLoader != nullptr)
+                {
+                    // In the first player's area too: its links followed again from the second player's place (each link's hulls,
+                    // the places from which it's followed, tested with the second's position). With only the first's tested, the
+                    // second player walked up to the caves' passage with the first elsewhere in the same area and hit its load wall,
+                    // the next area never loaded (2026-11-11). Marked as from another frame so the links are gone through again (its
+                    // depths stay 0)
+                    if (secondLoader == manager->focusLoader)
+                    {
+                        secondLoader->frame = manager->frame - 1;
+                    }
+
+                    Reference* focus = manager->focus;
+                    manager->focus = second;
+                    LoadLinkedChunks(secondLoader, manager->frame, 0, 0);
+                    manager->focus = focus;
+                }
+
+                // What the loading does for the second player (2026-11-11: a wall it couldn't go through, its next area not loaded):
+                // its area's loader when it changes, and its links' areas every 5 seconds (each one's depths and whether its files
+                // are loaded)
+                static ChunkLoader* loggedRoot = nullptr;
+                static s32 loggedFrame = 0;
+                ChunkLoader* root = second != nullptr ? secondLoader : nullptr;
+                if (root != loggedRoot)
+                {
+                    loggedRoot = root;
+                    ReferencedObject* object = second != nullptr ? second->object : nullptr;
+                    Native::Log("chunks: the second player's area %s (%s)",
+                                root != nullptr && root->path.string != nullptr ? root->path.string
+                                : object != nullptr && object->chunk != nullptr && object->chunk->name.string != nullptr
+                                    ? object->chunk->name.string
+                                    : "none",
+                                second == nullptr ? "not followed"
+                                : root == nullptr ? "no loader holds it"
+                                : root == manager->focusLoader ? "the first player's too: its links followed from both places"
+                                                                : "followed");
+                }
+
+                if (root != nullptr && manager->frame - loggedFrame >= 300)
+                {
+                    loggedFrame = manager->frame;
+                    for (GameChunkLink* link = root->links; link != nullptr; link = link->next)
+                    {
+                        ChunkLoader* linked = link->loader != nullptr ? link->loader->loader : nullptr;
+                        Native::Log("chunks:   its link to %s: %s, depth %u, keep depth %u, keep link %u, files %s/%s, linked files "
+                                    "loaded %u",
+                                    link->path.string != nullptr ? link->path.string : "?", linked != nullptr ? "a loader" : "no loader",
+                                    linked != nullptr ? static_cast<unsigned>(linked->bits.depth) : 99u,
+                                    linked != nullptr ? static_cast<unsigned>(linked->bits.keepDepth) : 99u,
+                                    static_cast<unsigned>(link->data.flags.keep),
+                                    linked != nullptr && linked->sm2 != nullptr && linked->sm2->IsLoaded(false) ? "sm2" : "-",
+                                    linked != nullptr && linked->rm2 != nullptr && linked->rm2->IsLoaded(false) ? "rm2" : "-",
+                                    static_cast<unsigned>(link->data.flags.linkedRm2Loaded));
+                    }
+                }
+#endif
             }
 
             while (loader != nullptr)

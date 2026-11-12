@@ -288,6 +288,8 @@ namespace
 {
 // Keys pressed since the last read: a press shorter than a frame (the native frames can be slow) still counts for one
 bool g_Latched[SDL_SCANCODE_COUNT];
+// The same for the second player's keys (read at its own port's read, after the first player's has cleared g_Latched)
+bool g_SecondLatched[SDL_SCANCODE_COUNT];
 bool g_Watching = false;
 bool g_QuitAsked = false;
 
@@ -297,6 +299,7 @@ bool WatchPadEvents(void*, SDL_Event* event)
         event->key.scancode < SDL_SCANCODE_COUNT)
     {
         g_Latched[event->key.scancode] = true;
+        g_SecondLatched[event->key.scancode] = true;
     }
     else if (event->type == SDL_EVENT_QUIT || event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
     {
@@ -310,6 +313,100 @@ bool WatchPadEvents(void*, SDL_Event* event)
 
 namespace
 {
+// The second player on the keyboard while no second gamepad is plugged in (for now: a fixed set by the arrows, taken from the first
+// player while it's in use). The arrows move; Right Ctrl or keypad 0 jumps, Right Shift or keypad 1 spins, keypad Enter or
+// keypad 2 crouches, keypad 3 the status, keypad + or Page Down Select (the backpack), keypad 7 and 9 the shoulders, keypad 4, 6,
+// 8 and 5 the camera, keypad - Start
+struct SecondKey
+{
+    SDL_Scancode key;
+    u32 button;
+    // The stick it pushes (NoStickPush for a button): 0 left x, 1 left y, 2 right x, 3 right y, and which way
+    s32 axis;
+    u8 to;
+};
+
+constexpr s32 NoStickPush = -1;
+constexpr SecondKey SecondKeys[] = {
+    {SDL_SCANCODE_LEFT, 0, 0, 0x00},
+    {SDL_SCANCODE_RIGHT, 0, 0, 0xFF},
+    {SDL_SCANCODE_UP, 0, 1, 0x00},
+    {SDL_SCANCODE_DOWN, 0, 1, 0xFF},
+    {SDL_SCANCODE_RCTRL, NativeUi::PadBitCross, NoStickPush, 0},
+    {SDL_SCANCODE_KP_0, NativeUi::PadBitCross, NoStickPush, 0},
+    {SDL_SCANCODE_RSHIFT, NativeUi::PadBitSquare, NoStickPush, 0},
+    {SDL_SCANCODE_KP_1, NativeUi::PadBitSquare, NoStickPush, 0},
+    {SDL_SCANCODE_KP_ENTER, NativeUi::PadBitCircle, NoStickPush, 0},
+    {SDL_SCANCODE_KP_2, NativeUi::PadBitCircle, NoStickPush, 0},
+    {SDL_SCANCODE_KP_3, NativeUi::PadBitTriangle, NoStickPush, 0},
+    {SDL_SCANCODE_KP_PLUS, NativeUi::PadBitSelect, NoStickPush, 0},
+    {SDL_SCANCODE_PAGEDOWN, NativeUi::PadBitSelect, NoStickPush, 0},
+    {SDL_SCANCODE_KP_7, NativeUi::PadBitL1 | NativeUi::PadBitL2, NoStickPush, 0},
+    {SDL_SCANCODE_KP_9, NativeUi::PadBitR1 | NativeUi::PadBitR2, NoStickPush, 0},
+    {SDL_SCANCODE_KP_MINUS, NativeUi::PadBitStart, NoStickPush, 0},
+    {SDL_SCANCODE_KP_4, 0, 2, 0x00},
+    {SDL_SCANCODE_KP_6, 0, 2, 0xFF},
+    {SDL_SCANCODE_KP_8, 0, 3, 0x00},
+    {SDL_SCANCODE_KP_5, 0, 3, 0xFF},
+};
+
+// Whether the second player plays on the keyboard now: two players asked for and no second gamepad found at its last read
+bool SecondOnKeyboard()
+{
+    return Coop::SecondPlayerWanted() && g_SecondOpen && g_SecondGamepad == nullptr;
+}
+
+// The second player's keys as a pad (both of a stick's directions held: the middle)
+void ReadSecondKeys(NativeUi::BoundPad* bound)
+{
+    const bool* state = SDL_GetKeyboardState(nullptr);
+    u8* sticks[4] = {&bound->leftX, &bound->leftY, &bound->rightX, &bound->rightY};
+    bool pushed[4][2] = {};
+    *bound = {};
+    for (u8* stick : sticks)
+    {
+        *stick = StickMiddle;
+    }
+
+    for (const SecondKey& key : SecondKeys)
+    {
+        bool held = state[key.key] || g_SecondLatched[key.key];
+        if (!held)
+        {
+            continue;
+        }
+
+        if (key.axis == NoStickPush)
+        {
+            bound->buttons |= key.button;
+        }
+        else
+        {
+            pushed[key.axis][key.to != 0x00] = true;
+        }
+    }
+
+    for (int axis = 0; axis < 4; axis++)
+    {
+        if (pushed[axis][0] != pushed[axis][1])
+        {
+            *sticks[axis] = pushed[axis][0] ? 0x00 : 0xFF;
+        }
+    }
+
+    if ((bound->buttons & NativeUi::PadBitL2) != 0)
+    {
+        bound->l2Pressure = Pressed;
+    }
+
+    if ((bound->buttons & NativeUi::PadBitR2) != 0)
+    {
+        bound->r2Pressure = Pressed;
+    }
+
+    std::memset(g_SecondLatched, 0, sizeof(g_SecondLatched));
+}
+
 // A report as the PS2's pad gives it, from what the bindings made of the keys and a gamepad
 s32 WriteReport(const NativeUi::BoundPad& bound, u8 leftX, u8 leftY, u8* data)
 {
@@ -355,7 +452,23 @@ s32 ReadSecond(u8* data)
 
     FindSecondGamepad();
     NativeUi::BoundPad bound;
-    NativeUi::ReadGamepadOnly(g_SecondGamepad, &bound);
+    static bool onKeysWas = false;
+    bool onKeys = SecondOnKeyboard();
+    if (onKeys != onKeysWas)
+    {
+        onKeysWas = onKeys;
+        Native::Log("pads: the second player %s", onKeys ? "on the keyboard's arrows (no second gamepad)" : "on its gamepad");
+    }
+
+    if (onKeys)
+    {
+        ReadSecondKeys(&bound);
+    }
+    else
+    {
+        NativeUi::ReadGamepadOnly(g_SecondGamepad, &bound);
+    }
+
     u8 leftX = bound.leftX;
     u8 leftY = bound.leftY;
     static const char* testRun = std::getenv("TWIN_P2_TEST_RUN");
@@ -439,6 +552,15 @@ s32 Platform::Pads::Read(s32 port, s32 slot, u8* data)
     {
         keys[key] = state[key] || g_Latched[key];
         g_Latched[key] = false;
+    }
+
+    // The second player on the keyboard: its keys are its own, not the first player's
+    if (SecondOnKeyboard())
+    {
+        for (const SecondKey& key : SecondKeys)
+        {
+            keys[key.key] = false;
+        }
     }
 
     NativeUi::ReadBindings(keys, g_Gamepad, &bound);

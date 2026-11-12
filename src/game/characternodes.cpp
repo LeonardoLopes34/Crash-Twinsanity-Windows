@@ -258,8 +258,10 @@ u32 FollowNode::Update(TimeClock* clock)
     GameProgress& progress = g_AgentNodesGameController->progress;
     InstanceContext* player = progress.Instance(progress.play.character);
 #ifdef TWIN_NATIVE
-    // The second player on this PC follows with its own camera too (coop/secondplayer.cpp)
-    bool second = owner == Coop::SecondPlayer();
+    // The second player on this PC follows with its own camera too (coop/secondplayer.cpp), and the first keeps its own while the
+    // second is the played one (a cutscene the second player leads: stopped then, the first player's camera was put to sleep and
+    // its window stayed still for good, 2026-11-11)
+    bool second = owner == Coop::SecondPlayer() || owner == Coop::LocalPlayer();
 #else
     bool second = false;
 #endif

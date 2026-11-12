@@ -47,3 +47,7 @@ desktop.ini
 /coop/*.zip
 /compilar_log.txt
 /.venv-antigo-do-D/
+
+# The game's disc image, never shared (each player needs their own PAL copy)
+*.iso
+/iso/

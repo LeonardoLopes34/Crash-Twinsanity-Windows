@@ -2032,6 +2032,20 @@ PlayerCharacter* g_SavedCharacters[2] = {nullptr, nullptr};
 CharacterPart* g_SavedParts[2] = {nullptr, nullptr};
 PlayerCharacter* g_SecondCharacter = nullptr;
 CharacterPart* g_SecondPart = nullptr;
+// A cutscene set off by the second player is the second player's: the swap above kept through it (the second is "the player" for
+// its script, its camera and the chunks' loading), given back to the first once play is back. The first player meanwhile rides in
+// the second's backpack (the same area) or is benched where it stands (another area: its pad taken, its events off)
+bool g_SecondLeads = false;
+// Whether the game has been out of play since the lead started (the cutscene's state comes a frame after its script starts it), and
+// when the lead started (still in play two seconds later: no cutscene came, the lead given back)
+bool g_LeadOutOfPlay = false;
+u64 g_LeadSince = 0;
+struct Bench
+{
+    InstanceContext* instance = nullptr;
+    GamePad* pad = nullptr;
+};
+Bench g_Bench;
 
 // Once a frame: the reference to the second player kept (taken again when it's another, let go when it's gone)
 void KeepSecondRef()
@@ -2098,6 +2112,49 @@ float SoundNearness(const Vector4* at, InstanceContext* listener)
     float first = distance(listener->place->position);
     float near = distance(ear->place->position);
     return first > 0.01f && near < first ? near / first : 1.0f;
+}
+
+InstanceContext* SecondEarFor(ChunkData* chunk, InstanceContext* listener)
+{
+    if (!Wanted() || Active() || chunk == nullptr || !Valid() || g_Ride.rider == 1)
+    {
+        return nullptr;
+    }
+
+    InstanceContext* ear = CameraOf(g_Second.instance);
+    if (ear == nullptr || ear->place == nullptr || ear->chunk != chunk || ear == listener ||
+        (listener != nullptr && listener->chunk == chunk))
+    {
+        return nullptr;
+    }
+
+    return ear;
+}
+
+Reference* SecondPlayerReference()
+{
+    static const bool off = std::getenv("TWIN_ONE_FOCUS") != nullptr;
+    if (off || Active())
+    {
+        return nullptr;
+    }
+
+    // A cutscene the second player leads: the game's focus is the second (the progress's character swapped), so the other focus is
+    // the first player's, where it was benched (none while it rides in the second's backpack)
+    if (g_SecondLeads)
+    {
+        InstanceContext* first = g_SavedPlayer != nullptr ? static_cast<InstanceContext*>(g_SavedPlayer->object) : nullptr;
+        return first != nullptr && first->chunk != nullptr && g_Ride.rider != 0 ? g_SavedPlayer : nullptr;
+    }
+
+    InstanceContext* second = g_SecondRefFor;
+    if (g_SecondRef == nullptr || second == nullptr || !Valid() || second != g_Second.instance || second->chunk == nullptr ||
+        g_Ride.rider == 1)
+    {
+        return nullptr;
+    }
+
+    return g_SecondRef;
 }
 
 InstanceContext* LocalPlayer()
@@ -2210,7 +2267,8 @@ void BeginObjectUpdate(InstanceContext* owner)
 
 void EndObjectUpdate()
 {
-    if (!g_Swapped)
+    // (Kept while the second player leads a cutscene: FinishLead gives it back)
+    if (!g_Swapped || g_SecondLeads)
     {
         return;
     }
@@ -2245,6 +2303,12 @@ InstanceContext* PlayerFor(InstanceContext* asking, InstanceContext* player)
     if (g_SecondModel == nullptr || asking == nullptr || player == nullptr)
     {
         return player;
+    }
+
+    // (A cutscene the second player leads: it's the player for everything in it, Cortex and Nina following the player included)
+    if (g_SecondLeads && !Active() && Valid())
+    {
+        return g_Second.instance;
     }
 
     InstanceContext* first = LocalPlayer() != nullptr ? LocalPlayer() : player;
@@ -2373,6 +2437,119 @@ void EndWait()
 
     g_Wait = CheckpointWait();
 }
+
+// The first player benched where it stands through a cutscene the second leads in another area: its pad taken and its events off
+// (the world around it still steps: nothing hits it meanwhile), given back with FinishLead
+void BenchFirst(InstanceContext* first)
+{
+    ControlsNode* controls = ControlsOf(first);
+    CharacterAgent* agent = AgentOf(first);
+    if (first == nullptr || controls == nullptr || agent == nullptr)
+    {
+        return;
+    }
+
+    g_Bench.instance = first;
+    g_Bench.pad = controls->pad;
+    controls->pad = nullptr;
+    agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+    agent->eventFlags.eventsOff = 1;
+}
+
+void UnbenchFirst()
+{
+    InstanceContext* first = g_Bench.instance;
+    if (first != nullptr && InstanceLive(first))
+    {
+        ControlsNode* controls = ControlsOf(first);
+        if (controls != nullptr && controls->pad == nullptr)
+        {
+            controls->pad = g_Bench.pad != nullptr ? g_Bench.pad : OwnPad(0);
+        }
+
+        if (CharacterAgent* agent = AgentOf(first))
+        {
+            agent->eventFlags.eventsOff = 0;
+            agent->buttons.locked.value = 0;
+        }
+    }
+
+    g_Bench = Bench();
+}
+
+// The second player leads the cutscene it set off: the swap kept (it's "the player" for the script, the camera and the chunks'
+// loading), the first player into its backpack in the same area (out beside it once play is back) or benched in another
+void StartLead()
+{
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* second = SecondPlayer();
+    g_SecondLeads = true;
+    g_LeadOutOfPlay = false;
+    g_LeadSince = SDL_GetTicksNS();
+    if (g_Ride.rider == 1)
+    {
+        EndRide();
+    }
+
+    // (Benched where it stands, in any area: the players' ask, 2026-11-11. Taken in the second's backpack in the same area, the first
+    // was put on the second's spot at the end. Already riding in the second's backpack, it rides on)
+    if (g_Ride.rider < 0)
+    {
+        BenchFirst(first);
+    }
+
+    // The game's view the second player's follow camera from now (the progress's character is the second while it leads): the
+    // cutscene's rig moves the camera shown, and the first player's stayed in the first player's area, showing what the first
+    // player saw through the whole cutscene (2026-11-11)
+    GameController* controller = G_GameController;
+    if (controller != nullptr && second != nullptr && CameraOf(second) != nullptr &&
+        controller->progress.Instance(controller->progress.play.character) == second)
+    {
+        ShowCamera(controller, GameController::CameraFollow, 1);
+        g_Orbits[1].camera = nullptr;
+    }
+
+    Native::Log("second player: a cutscene set off by player 2 is player 2's (\"the player\" through it); player 1 %s",
+                g_Ride.rider == 0 ? "rides in player 2's backpack" : "waits where it is");
+}
+
+// Play back after a cutscene the second player led (or the game left it another way: a level's load, a restart): "the player" the
+// first again, the first out of the backpack beside the second or off the bench, and the first player's camera shown again
+void FinishLead(const char* why)
+{
+    if (!g_SecondLeads)
+    {
+        return;
+    }
+
+    g_SecondLeads = false;
+    EndObjectUpdate();
+    UnbenchFirst();
+    if (g_Ride.rider == 0)
+    {
+        EndRide();
+    }
+
+    // The first player's own camera shown again, of the kind the game shows now (its rig or the follow camera): the second's was
+    // shown from the cutscene's start. (The follow camera forced whatever the game showed left window 1 stuck where the first player
+    // had been, 2026-11-11)
+    GameController* controller = G_GameController;
+    InstanceContext* first = FirstPlayer();
+    InstanceContext* firstCamera = CameraOf(first);
+    if (controller != nullptr && firstCamera != nullptr && controller->State() == GameController::StatePlaying)
+    {
+        u32 kind = static_cast<u32>(controller->states.camera);
+        AssignReference(&controller->view.cameraObject, firstCamera);
+        ShowCamera(controller, kind == GameController::CameraGameRig ? GameController::CameraGameRig : GameController::CameraFollow,
+                   1);
+        Native::Log("camera: player 1's own camera shown again (%s)", kind == GameController::CameraGameRig ? "the game's rig"
+                                                                                                         : "the follow camera");
+    }
+
+    g_Orbits[0].camera = nullptr;
+    g_Orbits[1].camera = nullptr;
+    Native::Log("second player: the cutscene player 2 led is over (%s): \"the player\" is player 1 again", why);
+}
 }
 
 bool CheckpointWaitHolds(InstanceContext* checkpoint)
@@ -2432,8 +2609,18 @@ bool CutsceneWaitHolds(InstanceContext* director)
     {
         bool bySecond = SwappedToSecond();
         EndWait();
-        EndObjectUpdate();
         g_CutsceneForce = false;
+        // (2026-11-11, the players' rule: a cutscene is whoever set it off's. Set off by the second player it's the second's, the
+        // swap kept through it: the first player taken to the second, or the cutscene's camera at the first player's spot, left a
+        // grey screen with no camera when the first couldn't be taken there from another area)
+        static const bool oldWay = std::getenv("TWIN_CUTSCENE_FIRST") != nullptr;
+        if (bySecond && !oldWay && !Active() && Valid())
+        {
+            StartLead();
+            return false;
+        }
+
+        EndObjectUpdate();
         first = FirstPlayer();
         second = SecondPlayer();
         if (first == nullptr || second == nullptr || first->place == nullptr || second->place == nullptr)
@@ -2637,8 +2824,10 @@ bool RidingHides(const ModelNode* node)
         return false;
     }
 
-    InstanceContext* second = SecondPlayer();
-    return second != nullptr && node == ModelOf(second);
+    // (The one out of the cutscene: the second player, or the first in one the second leads. Hidden as the second in its own
+    // cutscene, the second player showed only while the game was paused, 2026-11-11)
+    InstanceContext* out = g_SecondLeads ? FirstPlayer() : SecondPlayer();
+    return out != nullptr && node == ModelOf(out);
 }
 
 bool RidingHidesShadow(const InstanceContext* instance)
@@ -2653,7 +2842,7 @@ bool RidingHidesShadow(const InstanceContext* instance)
         return true;
     }
 
-    return InCutscene() && instance == SecondPlayer();
+    return InCutscene() && instance == (g_SecondLeads ? FirstPlayer() : SecondPlayer());
 }
 
 namespace
@@ -2701,7 +2890,30 @@ bool g_OutWhenMade = false;
 void CameraWatchdog()
 {
     GameController* controller = G_GameController;
-    if (controller == nullptr || controller->State() != GameController::StatePlaying || !FreeCamera())
+    if (controller == nullptr || controller->State() != GameController::StatePlaying)
+    {
+        return;
+    }
+
+    // No view camera at all in play (a grey picture: after a cutscene set off in another area, 2026-11-11): the game's follow camera
+    // shown again after a moment (with either camera, the game's or the third person one)
+    static int none = 0;
+    if (ViewCamera(controller) == nullptr && FirstPlayer() != nullptr)
+    {
+        if (++none == 60)
+        {
+            none = 0;
+            ShowCamera(controller, GameController::CameraFollow, 1);
+            g_Orbits[0].camera = nullptr;
+            Native::Log("camera: no view camera in play: the game's follow camera shown again");
+        }
+    }
+    else
+    {
+        none = 0;
+    }
+
+    if (!FreeCamera())
     {
         return;
     }
@@ -2875,6 +3087,22 @@ void SecondPlayerFrame()
     static u32 heldCollision = 0;
     if (state != GameController::StatePlaying)
     {
+        if (g_SecondLeads)
+        {
+            g_LeadOutOfPlay = true;
+            // A cutscene the second player leads: it's in it as "the player", nothing to hold. Out of the cutscene another way than
+            // back to play (a level's load, a restart): "the player" given back at once (the instances may go with the level)
+            if (state != GameController::StateWatching && state != GameController::StatePaused &&
+                state != GameController::StateWaiting && state != GameController::StateStartingPlay)
+            {
+                FinishLead("the game left the cutscene");
+            }
+            else
+            {
+                return;
+            }
+        }
+
         if (state == GameController::StateWatching && Valid())
         {
             // In the first player's backpack through the cutscene (the first riding in the second's: out first); held still and
@@ -2928,6 +3156,21 @@ void SecondPlayerFrame()
             EndRide();
         }
 
+        return;
+    }
+
+    // Back in play after a cutscene the second player led: "the player" the first again, both where they are (the first beside the
+    // second when it rode in its backpack); the second player kept as it is (it played the cutscene itself: nothing to make again)
+    if (g_SecondLeads && (g_LeadOutOfPlay || SDL_GetTicksNS() - g_LeadSince > 2000000000ull))
+    {
+        FinishLead(g_LeadOutOfPlay ? "play is back" : "no cutscene came");
+        returning = false;
+        fromCutscene = false;
+        playingFrames = 0;
+    }
+    else if (g_SecondLeads)
+    {
+        // (The cutscene's state not there yet: nothing of play's runs meanwhile, the second player stays "the player")
         return;
     }
 

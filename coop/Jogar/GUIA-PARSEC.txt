@@ -32,6 +32,10 @@ PARA JOGAR
 4. Controles:
    - So o controle do amigo ligado no seu PC: ele e o Jogador 2, e voce joga no TECLADO.
    - Voce tambem com controle: o primeiro controle e seu, o segundo e dele.
+   - Nenhum controle (provisorio, para testar sozinho): o Jogador 2 joga no mesmo teclado, pelas SETAS.
+     Setas: andar. Ctrl direito ou Num 0: pular. Shift direito ou Num 1: girar. Enter do numerico ou Num 2: agachar.
+     Num 3: status. Num + ou Page Down: mochila (Select). Num 7 e Num 9: L e R. Num 4/6/8/5: camera. Num -: pausa.
+     Nesse modo o Jogador 1 perde essas teclas (gira a camera com Q/E e o mouse).
 5. Comecem um jogo novo ou carreguem o seu save. O segundo Crash aparece ao lado do seu na fase.
 
 MOCHILA
@@ -62,8 +66,13 @@ VER A TELA DO OUTRO
 
 CUTSCENE
 --------
-- A cutscene comeca na hora, sem esperar. O Jogador 2 vai para a mochila do Jogador 1 durante ela e sai ao lado dele
-  um segundo depois que o jogo volta.
+- A cutscene comeca na hora, sem esperar, e e DE QUEM ATIVOU.
+- Ativada pelo Jogador 1: o Jogador 2 vai para a mochila do Jogador 1 durante ela e sai ao lado dele um segundo depois
+  que o jogo volta.
+- Ativada pelo Jogador 2: a cena roda com o Jogador 2 (camera, falas e posicao nele). O Jogador 1 fica parado e
+  escondido onde estava, em qualquer area, e volta a jogar dali no fim, com a camera dele.
+- Para comparar com o jeito antigo (cutscene sempre no Jogador 1), abra o jogo com TWIN_CUTSCENE_FIRST=1.
+- Se a tela do Jogador 1 ficar sem camera (cinza) no jogo, ela volta sozinha em 1 segundo.
 
 BARCO, PORTAS DE FASE E VIAGENS
 -------------------------------
@@ -78,9 +87,10 @@ BARCO, PORTAS DE FASE E VIAGENS
 
 AREAS DO MAPA
 -------------
-- O mapa e dividido em areas (praia, hubc, hubd, pier...). O Jogador 2 pode andar livremente nas areas vizinhas a do
-  Jogador 1. So se ele for para uma area mais longe, que o jogo nao esta rodando, ele volta para a mochila do Jogador 1
-  (2 segundos depois). A distancia (coleira) so conta na mesma area.
+- O mapa e dividido em areas (praia, hubc, hubd, pier...). O jogo mantem vivas as areas em volta dos DOIS jogadores:
+  cada um pode ir para areas diferentes e o mundo continua rodando para os dois (o Jogador 2 nao trava mais numa area
+  longe do Jogador 1). A distancia (coleira) so conta na mesma area.
+- Para comparar com o jeito antigo (mundo so em volta do Jogador 1), abra o jogo com a variavel TWIN_ONE_FOCUS=1.
 
 MINIMAPA
 --------

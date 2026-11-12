@@ -656,7 +656,14 @@ s32 PlaySoundAtPosition(f32 volume, f32 pitch, GameSound* sound, u32 group, Chun
     }
 
     InstanceContext* listener = Listener();
-    if (listener == nullptr || chunk == nullptr || !(g_RenderedFrames - chunk->drawnFrame < 2))
+#ifdef TWIN_NATIVE
+    // Two players: a sound in the area of the second player's camera (away from the first's) heard by that camera, the area drawn
+    // by it or not lately (coop/secondplayer.cpp)
+    InstanceContext* ear = Coop::SecondEarFor(chunk, listener);
+#else
+    InstanceContext* ear = nullptr;
+#endif
+    if (listener == nullptr || chunk == nullptr || (ear == nullptr && !(g_RenderedFrames - chunk->drawnFrame < 2)))
     {
         return -1;
     }
@@ -667,8 +674,9 @@ s32 PlaySoundAtPosition(f32 volume, f32 pitch, GameSound* sound, u32 group, Chun
         return -1;
     }
 
-    ObjectPlace* place = listener->place;
-    ChunkData* listenerChunk = listener->chunk;
+    InstanceContext* hearer = ear != nullptr ? ear : listener;
+    ObjectPlace* place = hearer->place;
+    ChunkData* listenerChunk = hearer->chunk;
     RotateAndTranslate(place);
     Matrix4x4 view = place->matrix;
     VuInvertRigidInPlace(&view);
@@ -682,7 +690,7 @@ s32 PlaySoundAtPosition(f32 volume, f32 pitch, GameSound* sound, u32 group, Chun
     VuTransformPoint(&view, position, &local);
 #ifdef TWIN_NATIVE
     // Two players: as loud as it is to the nearer camera (coop/secondplayer.cpp)
-    if (f32 near = Coop::SoundNearness(position, listener); near < 1.0f)
+    if (f32 near = ear == nullptr ? Coop::SoundNearness(position, listener) : 1.0f; near < 1.0f)
     {
         local.x *= near;
         local.y *= near;
@@ -1183,6 +1191,17 @@ void UpdateInstanceSounds()
                 else
                 {
                     Matrix4x4 toListener;
+#ifdef TWIN_NATIVE
+                    // Two players: in the area of the second player's camera, heard by it (coop/secondplayer.cpp)
+                    InstanceContext* ear = Coop::SecondEarFor(instance->chunk, listener);
+                    if (ear != nullptr)
+                    {
+                        RotateAndTranslate(ear->place);
+                        toListener = ear->place->matrix;
+                        VuInvertRigidInPlace(&toListener);
+                    }
+                    else
+#endif
                     if (ChunkToListener(&cache, instance->chunk, &view, &toListener) == 0)
                     {
                         silence();
@@ -1195,7 +1214,7 @@ void UpdateInstanceSounds()
                     Vector4 local;
                     VuTransformPoint(&toListener, &at, &local);
 #ifdef TWIN_NATIVE
-                    if (f32 near = Coop::SoundNearness(&at, listener); near < 1.0f)
+                    if (f32 near = ear == nullptr ? Coop::SoundNearness(&at, listener) : 1.0f; near < 1.0f)
                     {
                         local.x *= near;
                         local.y *= near;
@@ -1332,7 +1351,21 @@ void UpdateMusicEmitters()
         u32 audible = 0;
         HeardSound heard;
         Matrix4x4 toListener;
-        if (ChunkToListener(&cache, instance->chunk, &view, &toListener) != 0)
+#ifdef TWIN_NATIVE
+        // Two players: in the area of the second player's camera, heard by it (coop/secondplayer.cpp)
+        InstanceContext* ear = Coop::SecondEarFor(instance->chunk, Listener());
+        bool placed = ear != nullptr;
+        if (placed)
+        {
+            RotateAndTranslate(ear->place);
+            toListener = ear->place->matrix;
+            VuInvertRigidInPlace(&toListener);
+        }
+#else
+        InstanceContext* ear = nullptr;
+        bool placed = false;
+#endif
+        if (placed || ChunkToListener(&cache, instance->chunk, &view, &toListener) != 0)
         {
             ObjectPlace* place = instance->place;
             RotateAndTranslate(place);
@@ -1340,7 +1373,7 @@ void UpdateMusicEmitters()
             Vector4 local;
             VuTransformPoint(&toListener, &at, &local);
 #ifdef TWIN_NATIVE
-            if (f32 near = Coop::SoundNearness(&at, Listener()); near < 1.0f)
+            if (f32 near = ear == nullptr ? Coop::SoundNearness(&at, Listener()) : 1.0f; near < 1.0f)
             {
                 local.x *= near;
                 local.y *= near;
