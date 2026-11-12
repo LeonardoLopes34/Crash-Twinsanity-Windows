@@ -1324,7 +1324,14 @@ int TwoViewsFrame()
                 g_FrameCost = g_FrameCost * 0.95 + static_cast<double>(g_FrameWork) * 0.05;
             }
 
-            if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
+            // (Not with the first window as fast as it goes, $TWIN_P1_FPS from 480: it never fits a budget it doesn't have, and it
+            // would be at the second's 60 for good. The second window at Parsec's 60 and the first with the rest, 2026-11-12)
+            const bool firstUnpaced = ViewRate(0) >= 480;
+            if (firstUnpaced)
+            {
+                g_Reduced = false;
+            }
+            else if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
             {
                 g_Reduced = true;
                 g_FitsSince = 0;
