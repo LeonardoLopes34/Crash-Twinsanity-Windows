@@ -1488,6 +1488,8 @@ GamePad* OwnPad(int player)
     return pads == nullptr ? nullptr : (player == 0 ? pads->pads[0] : pads->pads[1]);
 }
 
+void RetireSecond(const char* why);
+
 void StartRide(int rider)
 {
     InstanceContext* instance = PlayerOf(rider);
@@ -1496,6 +1498,15 @@ void StartRide(int rider)
     CharacterAgent* agent = AgentOf(instance);
     if (instance == nullptr || carrier == nullptr || controls == nullptr || agent == nullptr)
     {
+        return;
+    }
+
+    // Player 2 into the backpack from another area: made again in player 1's area instead, in its backpack. Ridden from there, its
+    // area was no longer kept and let go while window 2 still drew its camera in it: a crash (player 2 by Tikimon, player 1 on the
+    // beach, its backpack button, 2026-11-12)
+    if (rider == 1 && instance->chunk != carrier->chunk)
+    {
+        RetireSecond("into player 1's backpack from another area");
         return;
     }
 
