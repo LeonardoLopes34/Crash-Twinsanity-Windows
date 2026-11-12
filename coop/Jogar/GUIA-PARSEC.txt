@@ -97,7 +97,7 @@ MINIMAPA
 - Um circulo no canto de cima, a direita, de cada janela. Gira com a sua camera (pra cima e onde voce olha).
   Seta laranja = voce, bolinha verde com borda branca = o outro jogador (fica na borda se estiver longe),
   vermelho = inimigos, marrom = caixas, amarelo = frutas, azul = outros personagens, anel laranja = ping.
-- Jogador 1: tecla M liga/desliga. Jogador 2: seta pra cima do direcional.
+- Comeca DESLIGADO (pesa um pouco no FPS). Jogador 1: tecla M liga/desliga. Jogador 2: seta pra cima do direcional.
 
 CHECKPOINT
 ----------

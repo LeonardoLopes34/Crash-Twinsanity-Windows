@@ -636,7 +636,9 @@ struct Minimap
     float facing = 0.0f;
 };
 Minimap g_Minimap[2];
-bool g_MiniWanted[2] = {true, true};
+// Off to start with (2026-11-12, the players' ask, to see the frames without it: its list goes through every live instance a few
+// times a second, and with the world around both players there are more): M or the D-pad's up shows it
+bool g_MiniWanted[2] = {false, false};
 
 struct MiniScan
 {

@@ -29,48 +29,11 @@
 #include <cmath>
 #include <cstring>
 
-#include <xmmintrin.h>
-
 namespace NativeMath::VuFloat
 {
 constexpr u32 SignBit = 0x80000000u;
 constexpr u32 ExponentMask = 0x7F800000u;
 constexpr u32 MaxMagnitude = 0x7F7FFFFFu;
-
-// Whether this thread's arithmetic is the host's own, its MXCSR set to round towards zero with denormals taken and given as
-// zero (HostRounding: VU0's microprograms, the collisions' ray casts among them). The host's SSE operations are then the model's
-// exactly (each is the exact result rounded as the MXCSR says: towards zero, flushed below the smallest normal, the largest float
-// past it), at a few instructions an operation instead of the exact rounding's dozens: half the game's thread went to these
-// roundings in the two players' profile (2026-11-11). native/math-tests checks the model against the host so switched
-inline thread_local bool t_HostRounding = false;
-
-// The host's arithmetic for a scope ($TWIN_VU_EXACT_ROUNDING keeps the exact rounding's code, for comparison)
-class HostRounding
-{
-public:
-    HostRounding() : m_Saved(_mm_getcsr()), m_Was(t_HostRounding)
-    {
-        // Round towards zero (bits 13-14), flush to zero (15), denormals are zero (6)
-        constexpr unsigned RoundTowardZero = 0x6000u;
-        constexpr unsigned FlushToZero = 0x8000u;
-        constexpr unsigned DenormalsAreZero = 0x0040u;
-        _mm_setcsr((m_Saved & ~RoundTowardZero) | RoundTowardZero | FlushToZero | DenormalsAreZero);
-        t_HostRounding = true;
-    }
-
-    ~HostRounding()
-    {
-        t_HostRounding = m_Was;
-        _mm_setcsr(m_Saved);
-    }
-
-    HostRounding(const HostRounding&) = delete;
-    HostRounding& operator=(const HostRounding&) = delete;
-
-private:
-    unsigned m_Saved;
-    bool m_Was;
-};
 
 inline f32 AsFloat(u32 bits)
 {
@@ -164,47 +127,18 @@ inline u32 AddOperands(u32 a, u32 b)
     return TruncateToFloat(sum);
 }
 
-// The host's operations on operands (HostRounding's MXCSR): each one rounded by the host as the model rounds it. (Separate
-// statements and -ffp-contract=off: a product is rounded before it's added, as the VU's FMAC does)
-inline u32 HostAdd(u32 a, u32 b)
-{
-    f32 sum = AsFloat(a) + AsFloat(b);
-    return AsBits(sum);
-}
-
-inline u32 HostMultiply(u32 a, u32 b)
-{
-    f32 product = AsFloat(a) * AsFloat(b);
-    return AsBits(product);
-}
-
 inline u32 Add(u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        return HostAdd(Operand(a), Operand(b));
-    }
-
     return AddOperands(Operand(a), Operand(b));
 }
 
 inline u32 Sub(u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        return HostAdd(Operand(a), Operand(b) ^ SignBit);
-    }
-
     return AddOperands(Operand(a), Operand(b) ^ SignBit);
 }
 
 inline u32 MultiplyOperands(u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        return HostMultiply(a, b);
-    }
-
     // Two floats' product is exact in double precision
     double product = static_cast<double>(AsFloat(a)) * static_cast<double>(AsFloat(b));
     return TruncateToFloat(product);
@@ -219,21 +153,11 @@ inline u32 Mul(u32 a, u32 b)
 // multiplication (no clamp: rounding towards zero gives none to clamp)
 inline u32 MulAdd(u32 acc, u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        return HostAdd(Operand(acc), HostMultiply(Operand(a), Operand(b)));
-    }
-
     return AddOperands(Operand(acc), MultiplyOperands(Operand(a), Operand(b)));
 }
 
 inline u32 MulSub(u32 acc, u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        return HostAdd(Operand(acc), HostMultiply(Operand(a), Operand(b)) ^ SignBit);
-    }
-
     return AddOperands(Operand(acc), MultiplyOperands(Operand(a), Operand(b)) ^ SignBit);
 }
 
@@ -241,13 +165,6 @@ inline u32 MulSub(u32 acc, u32 a, u32 b)
 // unit when the exact remainder says it's off
 inline u32 DivideOperands(u32 a, u32 b)
 {
-    if (t_HostRounding)
-    {
-        // The magnitudes' quotient with the signs' exclusive or (a zero dividend a zero of that sign, as below)
-        f32 quotient = std::fabs(AsFloat(a)) / std::fabs(AsFloat(b));
-        return AsBits(quotient) | ((a ^ b) & SignBit);
-    }
-
     double dividend = std::fabs(static_cast<double>(AsFloat(a)));
     double divisor = std::fabs(static_cast<double>(AsFloat(b)));
     u32 sign = (a ^ b) & SignBit;
@@ -288,12 +205,6 @@ inline u32 DivideOperands(u32 a, u32 b)
 // The square root of an operand's magnitude rounded towards zero
 inline u32 SquareRootOperand(u32 a)
 {
-    if (t_HostRounding)
-    {
-        f32 root = std::sqrt(std::fabs(AsFloat(a)));
-        return AsBits(root);
-    }
-
     double value = std::fabs(static_cast<double>(AsFloat(a)));
     if (value == 0.0)
     {
