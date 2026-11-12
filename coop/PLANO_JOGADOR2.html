@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plano Jogador 2</title>
+<style>
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --surface-2: #efede6;
+  --text: #1d1c19;
+  --muted: #615e56;
+  --border: #dcd9cf;
+  --accent: #c2541b;
+  --accent-soft: #fbe6d9;
+  --done: #2f7d4a;
+  --done-soft: #dcefe2;
+  --test: #8a6a00;
+  --test-soft: #f6ecc8;
+  --todo: #4a5a8a;
+  --todo-soft: #e1e6f4;
+  --decide: #8a3a6e;
+  --decide-soft: #f3dfec;
+  --code-bg: #f1efe8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161513;
+    --surface: #1f1e1b;
+    --surface-2: #282622;
+    --text: #ece9e1;
+    --muted: #a39f94;
+    --border: #3a3732;
+    --accent: #ec8a52;
+    --accent-soft: #3d2618;
+    --done: #74c48e;
+    --done-soft: #1d3326;
+    --test: #e2c25a;
+    --test-soft: #352d12;
+    --todo: #9db0e8;
+    --todo-soft: #222a40;
+    --decide: #e39ccb;
+    --decide-soft: #3a2232;
+    --code-bg: #2a2824;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161513;
+  --surface: #1f1e1b;
+  --surface-2: #282622;
+  --text: #ece9e1;
+  --muted: #a39f94;
+  --border: #3a3732;
+  --accent: #ec8a52;
+  --accent-soft: #3d2618;
+  --done: #74c48e;
+  --done-soft: #1d3326;
+  --test: #e2c25a;
+  --test-soft: #352d12;
+  --todo: #9db0e8;
+  --todo-soft: #222a40;
+  --decide: #e39ccb;
+  --decide-soft: #3a2232;
+  --code-bg: #2a2824;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; display: grid; grid-template-columns: 220px 1fr; gap: 40px; }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; }
+nav.toc p { margin: 0 0 8px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-size: 12px; }
+nav.toc a { display: block; padding: 4px 0 4px 10px; color: var(--muted); text-decoration: none; border-left: 2px solid var(--border); }
+nav.toc a:hover { color: var(--text); border-left-color: var(--accent); }
+main { min-width: 0; }
+header h1 { font-size: 34px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.01em; }
+header .sub { color: var(--muted); margin: 0 0 24px; }
+h2 { font-size: 24px; margin: 48px 0 12px; padding-top: 8px; scroll-margin-top: 16px; }
+h3 { font-size: 18px; margin: 0 0 6px; }
+p { margin: 0 0 12px; }
+code { font: 13.5px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.lead { font-size: 18px; }
+.callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 16px; border-radius: 6px; margin: 16px 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.stat b { display: block; font-size: 26px; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: 13px; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; vertical-align: middle; }
+.pill.done { background: var(--done-soft); color: var(--done); }
+.pill.test { background: var(--test-soft); color: var(--test); }
+.pill.todo { background: var(--todo-soft); color: var(--todo); }
+.pill.decide { background: var(--decide-soft); color: var(--decide); }
+.phase { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; scroll-margin-top: 16px; }
+.phase-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.phase-head .num { font-weight: 700; color: var(--accent); font-size: 14px; }
+.phase dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 16px; margin: 14px 0 0; font-size: 15px; }
+.phase dt { color: var(--muted); font-weight: 600; }
+.phase dd { margin: 0; }
+.phase ul { margin: 0; padding-left: 20px; }
+.phase li { margin: 2px 0; }
+.table-wrap { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 560px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.flow span { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+.flow i { color: var(--muted); font-style: normal; }
+footer { margin-top: 48px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px; }
+@media (max-width: 820px) {
+  .wrap { grid-template-columns: 1fr; gap: 0; padding-top: 20px; }
+  nav.toc { position: static; margin-bottom: 8px; }
+  nav.toc a { display: inline-block; border-left: 0; padding: 2px 10px 2px 0; }
+  header h1 { font-size: 27px; }
+  .phase dl { grid-template-columns: 1fr; gap: 2px; }
+  .phase dt { margin-top: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Índice">
+  <p>Índice</p>
+  <a href="#objetivo">Objetivo</a>
+  <a href="#hoje">Onde estamos</a>
+  <a href="#problema">O problema central</a>
+  <a href="#mapa">Onde o jogo pede o jogador</a>
+  <a href="#fases">As fases</a>
+  <a href="#regras">Regras para decidir</a>
+  <a href="#protecoes">Proteções a apagar</a>
+  <a href="#trabalho">Como trabalhar</a>
+  <a href="#riscos">Riscos</a>
+</nav>
+<main>
+<header>
+  <h1>Jogador 2 como parte do mundo</h1>
+  <p class="sub">Plano do co-op de Crash Twinsanity, branch <code>coop-online</code>. Escrito em 12/11/2026 para o Leonardo e o andrew. Complementa o <code>coop/PLANO_MULTIPLAYER.md</code>.</p>
+</header>
+
+<section id="objetivo">
+<h2>Objetivo</h2>
+<p class="lead">Tudo o que funciona para o Jogador 1 tem que funcionar para o Jogador 2. Inimigos, itens, gatilhos, checkpoints, cutscenes e chefes reconhecem os dois Crashes como jogadores de verdade, e nenhum é "o jogador real" com o outro pendurado nele.</p>
+<div class="callout"><strong>É possível?</strong> Sim. O port é a descompilação completa do jogo, compilada nativa: toda a lógica (roteiros, inimigos, checkpoint, câmera) é C++ que dá para editar, e só o gráfico do PS2 é emulado. O jogo pergunta pelo jogador em cerca de 120 pontos do código, e os roteiros das fases só chegam ao jogador por esses pontos. Mudar esses pontos cobre o jogo inteiro. O limite está no conteúdo feito para um jogador só (chefes, veículos, a máscara única do Aku Aku), que pede regras combinadas, não só código.</div>
+</section>
+
+<section id="hoje">
+<h2>Onde estamos</h2>
+<p>O andrew juntou a 1.2.0 do original e começou o "multiplayer de verdade". O Leonardo juntou o branch dele no <code>coop-online</code> em 12/11 e corrigiu o que apareceu nos testes.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>O que</th><th>Estado</th><th>Onde</th></tr></thead>
+<tbody>
+<tr><td>Dois personagens completos (controle, física, câmera própria), duas janelas, Parsec</td><td><span class="pill done">funciona</span></td><td><code>secondplayer.cpp</code></td></tr>
+<tr><td>Versão 1.2.0 do original juntada</td><td><span class="pill done">feito</span></td><td>merge <code>ac91837</code></td></tr>
+<tr><td>Mundo vivo em volta dos dois (as áreas dos dois rodam)</td><td><span class="pill test">testar mais</span></td><td><code>chunkloading.cpp</code></td></tr>
+<tr><td>Cutscene de quem ativou (<code>StartLead</code>/<code>FinishLead</code>)</td><td><span class="pill test">testar mais</span></td><td><code>secondplayer.cpp</code></td></tr>
+<tr><td>Checkpoint ativado por qualquer um dos dois</td><td><span class="pill test">testar</span></td><td><code>c4bf140</code></td></tr>
+<tr><td>Barco pego pelo Jogador 2 (Jogador 1 levado e segurado no ponto do roteiro)</td><td><span class="pill test">testar</span></td><td><code>2c9ece1</code></td></tr>
+<tr><td>Filme ativado pelo Jogador 2 não teleporta ninguém</td><td><span class="pill test">testar</span></td><td><code>8eea807</code></td></tr>
+<tr><td>Fase da bola: Jogador 2 na mochila, uma vista só (regra combinada)</td><td><span class="pill done">funciona</span></td><td><code>OnVehicle</code></td></tr>
+<tr><td>Som perto da troca de área, janela 1 a 60 em cena pesada, clone do Jogador 1</td><td><span class="pill done">corrigido</span></td><td>11/11</td></tr>
+<tr><td>Inimigos, itens e roteiros enxergam o Jogador 2 de verdade</td><td><span class="pill todo">a fazer</span></td><td>este plano</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="problema">
+<h2>O problema central</h2>
+<p>O jogo original tem um jogador só. Hoje o mod "finge" que o Jogador 2 é o jogador: enquanto o jogo atualiza as coisas que estão mais perto do Jogador 2, o mod troca <code>g_PlayerInstance</code>, <code>g_PlayerCharacter</code> e <code>g_PlayerPart</code> para ele (<code>BeginObjectUpdate</code>/<code>EndObjectUpdate</code>) e desfaz a troca depois.</p>
+<div class="flow"><span>coisa perto do Jogador 2</span><i>→</i><span>troca "o jogador" para o 2</span><i>→</i><span>roda a coisa</span><i>→</i><span>desfaz a troca</span></div>
+<p>Isso fez o Jogador 2 funcionar rápido, mas é a origem da maior parte dos bugs. Um gatilho ativado por um jogador age no outro, roteiros e cutscenes rodam no personagem errado, e a câmera segue quem não devia. Por causa disso nasceram várias proteções (recriar o Jogador 2, coleira, mochila forçada, vigia da câmera). Elas escondem o problema, mas não o resolvem.</p>
+<p><strong>A mudança:</strong> cada lugar que pergunta "quem é o jogador?" passa a perguntar <em>qual</em> jogador: o que encostou, o mais perto, o dono da cutscene ou o líder. No fim, a troca é apagada.</p>
+</section>
+
+<section id="mapa">
+<h2>Onde o jogo pede o jogador</h2>
+<p>Contagem em <code>src/game</code> (12/11/2026). São usos de <code>g_PlayerInstance</code>, <code>g_PlayerCharacter(2)</code>, <code>g_PlayerPart(2)</code>, <code>PlayerInstance()</code>, <code>PlayerPart()</code>, <code>PlayerAgent()</code> e <code>PlayerHitPoints()</code>, mais o personagem jogado (<code>progress.characters[...]</code>, <code>play.character</code>).</p>
+<div class="stats">
+  <div class="stat"><b>~115</b><span>usos de "o jogador"</span></div>
+  <div class="stat"><b>~50</b><span>usos do personagem jogado</span></div>
+  <div class="stat"><b>19</b><span>arquivos do jogo</span></div>
+  <div class="stat"><b>36</b><span>só nas condições dos roteiros</span></div>
+</div>
+<div class="table-wrap"><table>
+<thead><tr><th>Arquivo</th><th class="n">Usos</th><th>O que pergunta</th><th>Resposta certa</th><th>Fase</th></tr></thead>
+<tbody>
+<tr><td><code>conditionchecks.cpp</code></td><td class="n">36</td><td>Condições dos roteiros: o jogador está agachado, correndo, caindo, girando, no chão; distância até mim; vida; munição; está na minha área; "é o jogador?"</td><td>O jogador do objeto que pergunta (o que ele mira, ou o mais perto)</td><td>2</td></tr>
+<tr><td><code>nodecontrollers.cpp</code></td><td class="n">28</td><td>Máscara do Aku Aku, olhar e animações ligadas ao jogador, vida do jogador</td><td>O dono do modelo, ou o mais perto; Aku Aku: ver regras</td><td>3</td></tr>
+<tr><td><code>commandsroutes.cpp</code></td><td class="n">6</td><td>Rotas: ponto mais perto do jogador, objeto ligado mais perto, foco em objeto na vista</td><td>O jogador mais perto</td><td>4</td></tr>
+<tr><td><code>trajectory.cpp</code>, <code>perception.cpp</code>, <code>pickups.cpp</code>, <code>objectnode*.cpp</code>, <code>motion.cpp</code>, <code>behaviours.cpp</code></td><td class="n">11</td><td>Projéteis e coberturas, o que o inimigo vê, frutas voando até o jogador, área do jogador</td><td>O mais perto / quem pegou / qualquer um dos dois</td><td>4</td></tr>
+<tr><td><code>characterframe.cpp</code>, <code>characterstate.cpp</code></td><td class="n">5</td><td><code>CharacterAgent::IsPlayer</code>, <code>TellTrigger</code>: "este personagem é o jogador?"</td><td>Verdadeiro para os dois</td><td>4</td></tr>
+<tr><td><code>commandsmotion.cpp</code>, <code>commandscharacters.cpp</code>, <code>commandsnode.cpp</code>, <code>commandsagents.cpp</code>, <code>commandsfocus.cpp</code>, <code>commandsgame.cpp</code></td><td class="n">21</td><td>Travar os controles do jogador, teleportar até a ligação da área, olhar para o jogador, flags do roteiro, foco ao lado do jogador</td><td>Em cutscene: o dono. Fora dela: quem ativou</td><td>5</td></tr>
+<tr><td><code>gamecontroller.cpp</code>, <code>progress.cpp</code>, <code>gamecontext.cpp</code>, <code>oleg.cpp</code></td><td class="n">~36</td><td>Checkpoint, troca de fase, troca de personagem, foco do carregamento, HUD (vida, frutas)</td><td>O líder (o Jogador 1, ou o dono da cutscene); HUD de cada um</td><td>6</td></tr>
+</tbody></table></div>
+<p>Ajudantes que já existem em <code>secondplayer.cpp</code>: <code>FirstPlayer()</code>, <code>SecondPlayer()</code>, <code>NearerPlayer()</code> (com a escolha estável de quem cada coisa segue, <code>FollowsSecond</code>) e <code>PlayerFor()</code>.</p>
+</section>
+
+<section id="fases">
+<h2>As fases</h2>
+<p>Cada fase é um ou mais commits, testada em jogo antes da próxima. A troca de "o jogador" continua ligada até a fase 7: assim cada passo pode ser comparado com o anterior, e o jogo nunca fica quebrado no meio.</p>
+
+<article class="phase" id="f0">
+  <div class="phase-head"><span class="num">FASE 0</span><h3>Testar a base atual</h3><span class="pill test">agora</span></div>
+  <p>Antes de mexer na estrutura, confirmar que o que já existe funciona com controle e pelo Parsec. O andrew testou com as setas do teclado; o Leonardo testou partes.</p>
+  <dl>
+    <dt>Testar</dt><dd><ul><li>Checkpoint ativado só pelo Jogador 2.</li><li>Barco pego pelo Jogador 2 (o log mostra "moved ... away by the game").</li><li>Filme perto do Tikimon ativado pelo Jogador 2.</li><li>Cutscene ativada pelo Jogador 2 em outra área.</li><li>Jogador 2 longe, em outra área, por vários minutos.</li><li>FPS com e sem <code>TWIN_ONE_FOCUS=1</code>.</li></ul></dd>
+    <dt>Pronto quando</dt><dd>Uma volta do começo até o Ice Lab sem tela preta, sem teleporte inesperado e sem voltar ao checkpoint sem ter morrido.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f1">
+  <div class="phase-head"><span class="num">FASE 1</span><h3>Infraestrutura de jogadores</h3><span class="pill todo">a fazer</span></div>
+  <p>Um lugar só que sabe quem são os jogadores e responde às perguntas do jogo. Todas as fases seguintes usam isso.</p>
+  <dl>
+    <dt>O que fazer</dt><dd><ul>
+      <li>Uma lista de jogadores com instância, personagem (<code>PlayerCharacter</code>), parte (<code>CharacterPart</code>), controle, câmera e vida.</li>
+      <li>As perguntas: <code>PlayerOf(objeto)</code> (o jogador que aquele objeto segue, com a escolha estável que já existe), <code>NearestPlayer(ponto, área)</code>, <code>IsAnyPlayer(instância)</code>, <code>CutsceneOwner()</code> e <code>Leader()</code>.</li>
+      <li>No modo de um jogador, as perguntas devolvem sempre o Jogador 1, como hoje (o jogo original não muda).</li>
+    </ul></dd>
+    <dt>Arquivos</dt><dd><code>src/platform/native/coop/coop.h</code>, <code>secondplayer.cpp</code> (ou um <code>players.cpp</code> novo, se ficar grande)</dd>
+    <dt>Pronto quando</dt><dd>Compila, o jogo de um jogador continua igual e o autoteste <code>native/coop-tests</code> passa. Não muda nada em jogo ainda.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f2">
+  <div class="phase-head"><span class="num">FASE 2</span><h3>Condições dos roteiros</h3><span class="pill todo">a fazer</span><span class="pill">36 pontos</span></div>
+  <p>O maior grupo e o mais mecânico: cada condição já recebe o objeto que pergunta, então basta trocar "o jogador" por <code>PlayerOf(objeto)</code>.</p>
+  <dl>
+    <dt>Grupos</dt><dd><ul>
+      <li><strong>Estado do corpo:</strong> <code>PlayerIsAirborne</code>, <code>Crouching</code>, <code>Falling</code>, <code>Grounded</code>, <code>Moving</code>, <code>Running</code>, <code>Sliding</code>, <code>Spinning</code>, <code>Walking</code>, <code>IsDownBlast</code>.</li>
+      <li><strong>Distância e área:</strong> <code>MeToPlayerSqrDist</code>, <code>FocusPositionToPlayerDistanceSquared</code>, <code>IsInPlayerChunk</code>.</li>
+      <li><strong>Identidade:</strong> <code>IsPlayer</code>, <code>HasActorWeight</code> (alguém em cima de mim), <code>PlayerIsCoOpLinked</code>.</li>
+      <li><strong>Recursos:</strong> <code>PlayerHitPoints</code>, <code>PlayerAmmo</code>, <code>PlayerGunSecondCount</code>, <code>PlayerGunShotCharge</code>, <code>PlayerJustShot</code>, <code>PlayerHoldingMultiTool</code>.</li>
+      <li><strong>Veículos:</strong> <code>IsVehicleHoverboard</code>, <code>PlayerHumiliskateCrouched</code>, <code>PlayerIsSlammingTied</code>.</li>
+    </ul></dd>
+    <dt>Arquivos</dt><dd><code>src/game/conditionchecks.cpp</code></dd>
+    <dt>Pronto quando</dt><dd>Inimigos que reagem ao jogador agachado, correndo ou perto reagem aos dois. Plataformas e interruptores que sentem peso funcionam com o Jogador 2 sozinho. Testar: praia (galinhas, interruptores), hubc e hubd (inimigos), qualquer porta de peso.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f3">
+  <div class="phase-head"><span class="num">FASE 3</span><h3>Controladores de nó e Aku Aku</h3><span class="pill todo">a fazer</span><span class="pill">28 pontos</span></div>
+  <p>Controladores de animação e aparência que olham para o jogador: cabeça que segue o jogador, máscara do Aku Aku e coisas ligadas à vida do jogador.</p>
+  <dl>
+    <dt>O que fazer</dt><dd><ul>
+      <li>Olhar e animação: o jogador dono do modelo, ou o mais perto.</li>
+      <li>Aku Aku: depende da regra (veja abaixo). A versão simples segue o dono da máscara pegando a vida dele. A completa cria uma segunda máscara para o Jogador 2.</li>
+    </ul></dd>
+    <dt>Arquivos</dt><dd><code>src/game/nodecontrollers.cpp</code> (<code>MaskController</code>, <code>PlayerHitPoints</code>, <code>PlayerInvincible</code>)</dd>
+    <dt>Pronto quando</dt><dd>O Aku Aku de cada jogador mostra a vida certa e não pula de um para o outro.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f4">
+  <div class="phase-head"><span class="num">FASE 4</span><h3>Inimigos, itens e visão</h3><span class="pill todo">a fazer</span><span class="pill">~22 pontos</span></div>
+  <p>O mundo reage aos dois: inimigos perseguem e atacam o mais perto, frutas voam para quem pegou e os gatilhos aceitam os dois.</p>
+  <dl>
+    <dt>O que fazer</dt><dd><ul>
+      <li><code>CharacterAgent::IsPlayer</code> e <code>TellTrigger</code> verdadeiros para os dois personagens.</li>
+      <li>Rotas e mira (<code>commandsroutes.cpp</code>, <code>trajectory.cpp</code>): o jogador mais perto.</li>
+      <li>Visão dos inimigos (<code>perception.cpp</code>): enxergam os dois.</li>
+      <li>Itens (<code>pickups.cpp</code>, <code>PickupObjectNode::FlyToFocus</code>): voam para quem pegou, na área dele.</li>
+    </ul></dd>
+    <dt>Pronto quando</dt><dd>Com o Jogador 1 longe, o Jogador 2 sozinho apanha e bate em inimigos, pega frutas e caixas e ativa gatilhos, tudo igual ao Jogador 1.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f5">
+  <div class="phase-head"><span class="num">FASE 5</span><h3>Comandos que movem o jogador</h3><span class="pill todo">a fazer</span><span class="pill">~21 pontos</span></div>
+  <p>Comandos dos roteiros que agem no jogador: travar os controles, teleportar, virar a cabeça, pôr flags, mover o foco da câmera.</p>
+  <dl>
+    <dt>Regra</dt><dd>Em cutscene, o dono da cutscene (<code>CutsceneOwner()</code>). Fora dela, quem ativou o gatilho.</dd>
+    <dt>Exemplos</dt><dd><code>SetPlayerInputCommand</code> (travar os controles), <code>WarpToChunkLinkTowardsPlayerCommand</code>, <code>SetHeadTrackingTargetCommand</code>, <code>PickLinkedObjectNearPlayerCommand</code>, <code>SetAgentRef1ToPlayerCommand</code>, <code>SetFocusPositionToPlayerCommand</code>, <code>SetPlayerScriptFlagCommand</code>, <code>SetFocusPositionBesidePlayerCommand</code>.</dd>
+    <dt>Liga com</dt><dd>A cutscene de quem ativou (<code>StartLead</code>), que hoje mantém a troca ligada durante a cutscene inteira. Aqui ela passa a perguntar o dono.</dd>
+    <dt>Pronto quando</dt><dd>Cutscenes, filmes e barco ativados pelo Jogador 2 acontecem com ele, e o Jogador 1 continua livre (ou escondido, pela regra da cutscene).</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f6">
+  <div class="phase-head"><span class="num">FASE 6</span><h3>Estado do jogo, líder e HUD</h3><span class="pill todo">a fazer</span><span class="pill">~36 pontos</span></div>
+  <p>As coisas que só podem ser de um: o checkpoint, a troca de fase, o foco do carregamento e o personagem jogado. Elas ficam com o <strong>líder</strong>. E o que deve ser de cada um ganha uma segunda cópia: vida e HUD.</p>
+  <dl>
+    <dt>O que fazer</dt><dd><ul>
+      <li><code>Leader()</code>: o Jogador 1, ou o dono da cutscene enquanto ela dura. Usado em <code>gamecontroller.cpp</code> (<code>SwitchCharacter</code>, recomeço) e <code>progress.cpp</code>.</li>
+      <li>Troca de fase: quem entra leva o outro (como o barco hoje).</li>
+      <li>Vida de cada jogador; morrer leva só aquele jogador de volta (a decidir); game over só com os dois sem vida.</li>
+      <li>HUD de cada janela com a vida e as frutas do seu jogador (<code>oleg.cpp</code>).</li>
+    </ul></dd>
+    <dt>Pronto quando</dt><dd>O Jogador 2 morre e volta sem derrubar o Jogador 1 (se for essa a regra), cada janela mostra a própria vida, e a troca de fase funciona com qualquer um entrando.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f7">
+  <div class="phase-head"><span class="num">FASE 7</span><h3>Apagar a troca e as proteções</h3><span class="pill todo">a fazer</span></div>
+  <p>Com as fases 2 a 6 prontas, nada mais precisa da troca de "o jogador". Ela sai, e as proteções que existiam só por causa dela também (lista abaixo), uma por vez e com teste.</p>
+  <dl>
+    <dt>Arquivos</dt><dd><code>secondplayer.cpp</code> (<code>BeginObjectUpdate</code>, <code>EndObjectUpdate</code>, <code>FollowsSecond</code>), <code>instances.cpp</code> (a chamada em <code>ChunkInstances::Update</code>)</dd>
+    <dt>Pronto quando</dt><dd><code>TWIN_P2_NO_SWAP</code> deixa de existir porque não há troca, e uma volta inteira até o fim do primeiro mundo funciona.</dd>
+  </dl>
+</article>
+
+<article class="phase" id="f8">
+  <div class="phase-head"><span class="num">FASE 8</span><h3>Duas telas sem alternar quadros</h3><span class="pill todo">depois</span></div>
+  <p>Hoje cada quadro atualiza o mundo e desenha uma tela só, alternando entre as janelas. Isso exigiu ritmo adaptativo, imagem atrasada dois quadros e a correção do som. O certo é atualizar o mundo uma vez e desenhar as duas vistas.</p>
+  <dl>
+    <dt>Por que depois</dt><dd>Mexe na emulação gráfica (VU1, thread de desenho), a parte mais delicada. Não bloqueia as outras fases.</dd>
+    <dt>Já se sabe</dt><dd>Pelos testes do andrew (<code>7f1192d</code>, <code>5522529</code>), mostrar a imagem custa quase tudo na troca do contexto OpenGL entre as janelas (1,5 a 3 ms por imagem).</dd>
+  </dl>
+</article>
+</section>
+
+<section id="regras">
+<h2>Regras para decidir</h2>
+<p>São decisões de jogo, não de código. Precisam ser combinadas pelos dois antes da fase correspondente.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Assunto</th><th>Hoje</th><th>Opções</th><th>Fase</th></tr></thead>
+<tbody>
+<tr><td>Aku Aku</td><td>Uma máscara, segue quem é "o jogador" ali</td><td>(a) uma máscara, sempre do Jogador 1; (b) uma para cada jogador, cada uma com a vida do seu</td><td><span class="pill decide">3</span></td></tr>
+<tr><td>Vida e morte</td><td>Qualquer morte volta os dois ao checkpoint</td><td>(a) como hoje; (b) quem morre volta ao lado do outro, e o checkpoint só com os dois mortos</td><td><span class="pill decide">6</span></td></tr>
+<tr><td>Frutas e vidas</td><td>Contador único</td><td>(a) compartilhado; (b) cada um o seu</td><td><span class="pill decide">6</span></td></tr>
+<tr><td>Chefes sem cutscene</td><td>Tikimon e Cortex deram problema</td><td>(a) os dois lutam; (b) o Jogador 2 na mochila</td><td><span class="pill decide">5</span></td></tr>
+<tr><td>Fases com o Cortex amarrado (pareamento 4)</td><td>Jogador 2 livre</td><td>(a) livre; (b) na mochila</td><td><span class="pill decide">5</span></td></tr>
+<tr><td>Veículos (bola, skate)</td><td>Jogador 2 na mochila, uma vista</td><td>Combinado em 11/11. Rever só se alguém quiser</td><td><span class="pill done">decidido</span></td></tr>
+<tr><td>Troca de fase e barco</td><td>Quem entra leva o outro</td><td>Combinado. Vale para os dois</td><td><span class="pill done">decidido</span></td></tr>
+</tbody></table></div>
+</section>
+
+<section id="protecoes">
+<h2>Proteções a apagar na fase 7</h2>
+<p>Elas existem por causa da troca de "o jogador" ou do mundo em volta de um jogador só. Devem sair quando a causa sumir, e não antes.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Proteção</th><th>Por que existe</th><th>Sai depois da fase</th></tr></thead>
+<tbody>
+<tr><td><code>RetireSecond</code> depois de toda cutscene e checkpoint</td><td>O Jogador 2 ficava preso pelos comandos de roteiro que rodaram nele</td><td>5, 6</td></tr>
+<tr><td>Coleira (<code>LeashFrame</code>, 220/300)</td><td>O mundo só existia em volta do Jogador 1</td><td>6 (mundo em volta dos dois já feito)</td></tr>
+<tr><td>Mochila forçada depois de morte e carregamento</td><td>Recriado ao lado, o Jogador 2 caía em parede ou buraco</td><td>6</td></tr>
+<tr><td><code>KeepPlayersApart</code></td><td>Controle e "o jogador" no personagem errado depois do Tikimon</td><td>7</td></tr>
+<tr><td><code>CameraWatchdog</code></td><td>Câmera largada longe por roteiro rodado no jogador errado</td><td>5</td></tr>
+<tr><td>"Preso no ar na área vizinha"</td><td>Física do Jogador 2 parada pela troca</td><td>7</td></tr>
+<tr><td><code>afterMovie</code>, <code>g_Hold</code> (barco)</td><td>Filmes e barco ativados pelo Jogador 2 agiam no Jogador 1</td><td>5</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="trabalho">
+<h2>Como trabalhar</h2>
+<div class="phase"><dl style="margin:0">
+  <dt>Branch</dt><dd><code>coop-online</code> no fork <code>LeonardoLopes34/Crash-Twinsanity-Windows</code>. Enviar com <code>git push fork coop-online</code> (Leonardo) ou <code>git push origin coop-online</code> (andrew). Puxar antes de começar.</dd>
+  <dt>Compilar</dt><dd><code>coop\COMPILAR.bat</code>. Depois de mudar de branch ou de receber arquivos C++ novos, rodar antes <code>configure.py</code> com <code>PS2DEV=build\ps2dev</code>.</dd>
+  <dt>Commits</dt><dd>Um por correção, mensagem em inglês descritivo no estilo do <code>git log</code>. Atualizar o <code>GUIA-PARSEC.txt</code> sempre que um comportamento mudar.</dd>
+  <dt>Testar</dt><dd>Jogar, rodar <code>coop\Jogar\PEGAR LOGS.bat</code> e ler o <code>log_ultimo.txt</code>. As linhas <code>second player:</code>, <code>game:</code>, <code>chunks:</code> e <code>performance:</code> mostram quase tudo.</dd>
+  <dt>Dividir</dt><dd>As fases 2, 3 e 4 mexem em arquivos diferentes e podem andar em paralelo depois da fase 1. As fases 5 e 6 dependem das regras decididas. A fase 7 vem por último.</dd>
+</dl></div>
+</section>
+
+<section id="riscos">
+<h2>Riscos</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Risco</th><th>Como cuidar</th></tr></thead>
+<tbody>
+<tr><td>Quebrar o jogo de um jogador</td><td>No modo de um jogador, as perguntas devolvem sempre o Jogador 1. Testar uma fase do jogo normal a cada fase do plano.</td></tr>
+<tr><td>Sem teste automático de jogabilidade</td><td>Fases pequenas, um commit por mudança, log detalhado e roteiro de teste em cada fase.</td></tr>
+<tr><td>Memória e processador com as áreas dos dois rodando</td><td>Comparar as linhas <code>performance:</code> com e sem <code>TWIN_ONE_FOCUS=1</code>.</td></tr>
+<tr><td>Conteúdo que só faz sentido com um jogador</td><td>Decidir a regra antes (tabela acima). Onde não há regra boa, o Jogador 2 vai na mochila.</td></tr>
+<tr><td>Roteiros de dados que supõem um jogador</td><td>Eles só chegam ao jogador pelos pontos mapeados. O log de cutscene (<code>cutscene skip:</code>) mostra quais roteiros rodaram.</td></tr>
+</tbody></table></div>
+</section>
+
+<footer>Números contados em <code>src/game</code> no commit <code>2c9ece1</code> do <code>coop-online</code>. Arquivo: <code>coop/PLANO_JOGADOR2.html</code>.</footer>
+</main>
+</div>
+</body>
+</html>
