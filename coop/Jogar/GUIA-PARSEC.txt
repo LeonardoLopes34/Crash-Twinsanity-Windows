@@ -110,7 +110,8 @@ CHECKPOINT
 
 MOCHILA
 -------
-- Quem esta dentro nao conta no mundo (inimigos, Cortex, frutas) e ve exatamente a camera de quem carrega.
+- Quem esta dentro nao conta no mundo (inimigos, Cortex, frutas). A camera dele gira em volta de quem carrega, com o
+  analogico direito dele (cada um mexe a sua).
 - Depois de uma cutscene o Jogador 2 so entra na mochila se ficou longe do Jogador 1.
 
 FLUIDEZ

@@ -444,14 +444,9 @@ namespace
 {
 void OrbitCamera(int player, InstanceContext* character, InstanceContext* camera, GamePad* pad)
 {
+    // (A rider's too: its character is kept on the carrier's spot, so its camera turns round the carrier, by its own stick. It was the
+    // carrier's view copied, and the rider couldn't turn it, 2026-11-12)
     Orbit& orbit = g_Orbits[player];
-    // The rider's view is the carrier's (copied by OrbitCameras): its own stick and mouse turn nothing
-    if (RiderPlayer() == player)
-    {
-        orbit.camera = nullptr;
-        return;
-    }
-
     CharacterAgent* agent = AgentOf(character);
     if (character == nullptr || camera == nullptr || character->place == nullptr || camera->place == nullptr || agent == nullptr ||
         agent->vehicle != nullptr || character->chunk == nullptr)
@@ -575,21 +570,6 @@ void OrbitCameras()
     if (Wanted() && second != nullptr)
     {
         OrbitCamera(1, second, CameraOf(second), pads != nullptr ? pads->pads[1] : nullptr);
-    }
-
-    // The rider sees what the carrier sees: its camera put where the carrier's is, each frame
-    int rider = RiderPlayer();
-    if (rider >= 0 && second != nullptr)
-    {
-        InstanceContext* riderCamera = rider == 0 ? ViewCamera(controller) : CameraOf(second);
-        InstanceContext* carrierCamera = rider == 0 ? CameraOf(second) : ViewCamera(controller);
-        if (riderCamera != nullptr && carrierCamera != nullptr && riderCamera != carrierCamera && riderCamera->place != nullptr &&
-            carrierCamera->place != nullptr)
-        {
-            RotateAndTranslate(carrierCamera->place);
-            Matrix4x4 same = carrierCamera->place->matrix;
-            SetPlaceMatrix(riderCamera->place, &same);
-        }
     }
 }
 }
