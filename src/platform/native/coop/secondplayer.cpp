@@ -1452,10 +1452,6 @@ struct Ride
     Vector4 from = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 Ride g_Ride;
-// The carrier's place a frame ago (a jump between frames is another area's numbers, a teleport), forgotten at each ride's start:
-// kept from the last ride, a new one ended at once, four times in a row (2026-11-11)
-Vector4 g_CarrierWas = {0.0f, 0.0f, 0.0f, 1.0f};
-InstanceContext* g_CarrierWasOf = nullptr;
 // When a ride last started or ended: a press within a moment of it is ignored (the log showed ten changes a second at a boss)
 u64 g_RideChanged = 0;
 constexpr u64 RideDebounce = 400000000ull;
@@ -1511,7 +1507,6 @@ void StartRide(int rider)
     }
 
     g_RideChanged = SDL_GetTicksNS();
-    g_CarrierWasOf = nullptr;
     g_Ride.rider = rider;
     g_Ride.instance = instance;
     g_Ride.pad = controls->pad;
@@ -1841,6 +1836,57 @@ void BackpackFrame()
         }
     }
 
+    // A player carried by a script (its inputs locked a second and more, moved 40 and more since, or into another area: a boat) takes
+    // the other along in its backpack, from any linked area. The boat is whoever got on's: left out, the other stayed behind on the
+    // island while the boat went to the Ice Lab, or the boat set off from hubboat1 while the other was in hubd (2026-11-12)
+    {
+        static u64 lockedSince[2] = {0, 0};
+        static Vector4 lockedAt[2] = {};
+        static ChunkData* lockedIn[2] = {nullptr, nullptr};
+        for (int player = 0; player < 2 && g_Ride.rider < 0; player++)
+        {
+            InstanceContext* instance = PlayerOf(player);
+            InstanceContext* other = PlayerOf(1 - player);
+            CharacterAgent* agent = AgentOf(instance);
+            if (instance == nullptr || other == nullptr || agent == nullptr || instance->place == nullptr ||
+                agent->buttons.locked.value == 0)
+            {
+                lockedSince[player] = 0;
+                continue;
+            }
+
+            instance->place->SyncPosition();
+            Vector4 at = instance->place->position;
+            if (lockedSince[player] == 0)
+            {
+                lockedSince[player] = SDL_GetTicksNS();
+                lockedAt[player] = at;
+                lockedIn[player] = instance->chunk;
+                continue;
+            }
+
+            float dx = at.x - lockedAt[player].x;
+            float dy = at.y - lockedAt[player].y;
+            float dz = at.z - lockedAt[player].z;
+            bool away = instance->chunk != lockedIn[player] || dx * dx + dy * dy + dz * dz > 40.0f * 40.0f;
+            if (SDL_GetTicksNS() - lockedSince[player] < 1000000000ull || !away)
+            {
+                continue;
+            }
+
+            lockedSince[player] = 0;
+            Native::Log("second player: player %d carried by a script (a boat): player %d into its backpack", player + 1, 2 - player);
+            // (Player 1 into player 2's: through the link when it's another area; player 2 into player 1's: made again there)
+            if (player == 1 && other->chunk != instance->chunk && !PutFirstWhereSecond(other, instance))
+            {
+                Native::Log("second player: player 2's area can't be reached from player 1's: player 1 stays");
+                continue;
+            }
+
+            StartRide(1 - player);
+        }
+    }
+
     if (g_Ride.rider >= 0)
     {
         // The rider or the carrier lets the rider out; gone (made again), it's over
@@ -1852,70 +1898,31 @@ void BackpackFrame()
 
         InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
         carrier->place->SyncPosition();
-        Vector4& carrierWas = g_CarrierWas;
-        InstanceContext*& carrierWasOf = g_CarrierWasOf;
-        bool jumped = carrierWasOf == carrier && std::fabs(carrier->place->position.x - carrierWas.x) +
-                                                         std::fabs(carrier->place->position.y - carrierWas.y) +
-                                                         std::fabs(carrier->place->position.z - carrierWas.z) > 25.0f;
-        carrierWas = carrier->place->position;
-        carrierWasOf = carrier;
-        if (g_Ride.rider == 0)
-        {
-            // The first player rides along wherever the second goes: a teleport, another area through the link between them (the
-            // boat the second player takes, 2026-11-12; the world is kept around both players now). It was let out at the edge of
-            // the second's area when the world was kept around the first only (carried onto the boat to the Ice Lab it fell, before)
-            if (carrier->chunk == g_Ride.instance->chunk || PutFirstWhereSecond(g_Ride.instance, carrier))
-            {
-                g_ApartSince = 0;
-                PutAt(g_Ride.instance, carrier->place->position);
-                if (CharacterAgent* agent = AgentOf(g_Ride.instance))
-                {
-                    agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
-                }
-
-                return;
-            }
-
-            // No loaded link between the two areas: out where it was last carried to, in its own area
-            EndRide();
-            Native::Log("second player: player 2's area can't be reached from player 1's: player 1 out of the backpack where it was");
-            return;
-        }
-
-        if (carrier->chunk == g_Ride.instance->chunk && !jumped)
+        // The rider goes along wherever the carrier goes: a teleport, another area through the link between them (a boat, a door;
+        // the world is kept around both players now). Player 2 riding was made again outside the backpack once player 1 got off the
+        // boat in another area, and stood on the boat (2026-11-12); player 1 was let out at the edge of player 2's area
+        if (carrier->chunk == g_Ride.instance->chunk || PutFirstWhereSecond(g_Ride.instance, carrier))
         {
             g_ApartSince = 0;
             PutAt(g_Ride.instance, carrier->place->position);
+            if (CharacterAgent* agent = AgentOf(g_Ride.instance))
+            {
+                agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+            }
+
+            return;
+        }
+
+        // No loaded link between the two areas: player 2 made again in player 1's area (in its backpack); player 1, who can't be made
+        // again, out where it was last carried to, in its own area
+        if (g_Ride.rider == 1)
+        {
+            RetireSecond("the carrier is in an area not linked to the rider's");
         }
         else
         {
-            // The carrier crossed into another area: the rider's place can't be set from the carrier's numbers. Left a moment (the
-            // game carries characters across a door), then, the second player made again in the carrier's area; the first player,
-            // who can't be made again, let out of the backpack
-            u64 now = SDL_GetTicksNS();
-            if (g_ApartSince == 0)
-            {
-                g_ApartSince = now;
-            }
-            else if (now - g_ApartSince > 1000000000ull)
-            {
-                g_ApartSince = 0;
-                if (g_Ride.rider == 1)
-                {
-                    RetireSecond("the carrier is in another area");
-                }
-                else
-                {
-                    EndRide();
-                }
-
-                return;
-            }
-        }
-
-        if (CharacterAgent* agent = AgentOf(g_Ride.instance))
-        {
-            agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+            EndRide();
+            Native::Log("second player: player 2's area can't be reached from player 1's: player 1 out of the backpack where it was");
         }
 
         return;
@@ -2879,7 +2886,7 @@ bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second)
             return false;
         }
 
-        Native::Log("second player: the first player taken into the second's area (%s)",
+        Native::Log("second player: player %d taken into the other's area (%s)", first == FirstPlayer() ? 1 : 2,
                     second->chunk->name.string != nullptr ? second->chunk->name.string : "?");
     }
 

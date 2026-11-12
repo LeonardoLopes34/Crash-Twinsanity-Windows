@@ -76,15 +76,14 @@ CUTSCENE
 
 BARCO, PORTAS DE FASE E VIAGENS
 -------------------------------
-- O barco e de quem subir nele. Se o Jogador 1 subir, o Jogador 2 vai junto na mochila dele (ou fica para tras, se estiver
-  longe, e aparece ao lado depois).
-- Se o Jogador 2 subir, o barco leva ele, e o Jogador 1 vai junto na mochila do Jogador 2 assim que o barco se afasta. Na
-  chegada, os dois descem juntos; aperte SELECT para sair da mochila.
+- O barco e de quem subir nele. Um segundo depois de o barco sair, o outro jogador vai junto na mochila de quem subiu,
+  mesmo que esteja em outra area. Na chegada, os dois estao juntos; aperte SELECT para sair da mochila.
 - Filme (como o da chegada perto do Tikimon) ativado pelo Jogador 2: depois dele cada um continua onde estava (antes o
   Jogador 2 era levado de volta para o Jogador 1).
 - Aku Aku: o jogo tem uma mascara so, que segue quem e "o jogador" naquele lugar. Com o Jogador 2 na mochila ela fica com o
   Jogador 1 e mostra a vida dele.
-- Na mochila do Jogador 2, o Jogador 1 vai junto para qualquer area vizinha (o mundo agora roda em volta dos dois).
+- Na mochila, quem esta dentro vai junto para qualquer area vizinha, seja o Jogador 1 ou o 2 (o mundo agora roda em volta
+  dos dois).
 - Fases em que o Jogador 1 vira veiculo com o Cortex (a bola na caverna, o skate): o Jogador 2 fica na mochila o tempo
   todo e as duas janelas mostram a camera do Jogador 1.
 - Se o Jogador 2 ja passou para a area vizinha, o Jogador 1 pode entrar na mochila dele mesmo assim: ele e levado
