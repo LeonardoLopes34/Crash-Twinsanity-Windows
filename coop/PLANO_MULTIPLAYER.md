@@ -2,6 +2,37 @@
 
 Branch: `multiplayer-de-verdade` (sai do `coop-online`). Escrito em 11/11/2026.
 
+## Recado para o Leonardo (12/11/2026)
+
+Este branch é o `coop-online` mais:
+
+- **A versão 1.2.0 do original (GioPixelGH) já juntada** (commit `ac91837`): menos engasgos ao entrar em áreas novas,
+  medição da thread de desenho no log, opções novas (pular cutscene, vidas infinitas, SMAA...). Os conflitos estão
+  descritos na mensagem do commit; as regras do co-op (sem game over com dois jogadores, cada janela com sua imagem)
+  foram mantidas.
+- **Mundo vivo em volta dos dois jogadores** (`chunkloading.cpp`): o Jogador 2 não trava mais numa área longe.
+  `TWIN_ONE_FOCUS=1` volta ao jeito antigo.
+- **Cutscene de quem ativou** (`StartLead`/`FinishLead` no `secondplayer.cpp`): ativada pelo Jogador 2, ela roda com ele
+  (câmera, roteiro, posição); o Jogador 1 fica parado e escondido onde estava. `TWIN_CUTSCENE_FIRST=1` volta ao jeito antigo.
+- **Câmera do Jogador 1 nunca mais desligada** quando o 2 é "o jogador" (`characternodes.cpp`), e a câmera volta sozinha
+  se a janela 1 ficar sem câmera (tela cinza).
+- **Som do Jogador 2 longe** ouvido pela câmera dele (`soundobjects.cpp`).
+- **Checkpoint:** com o Jogador 1 longe da área do checkpoint, a fase é recarregada em vez do recomeço rápido
+  (`gamecontroller.cpp`: o recomeço rápido levava o Jogador 1 de outra área e travava uma cutscene).
+- **Sem controle, o Jogador 2 joga nas setas** (`pads.cpp`, provisório).
+- **Contador de FPS de cada janela** (antes mostrava a soma das duas) e o atalho `DOIS JOGADORES SEM TRAVA (teste).bat`.
+
+Testado em jogo pelo andrew no PC dele (Ryzen 5 5500X3D, RTX 2070 Super), sem controle (setas). As experiências de
+aumentar o FPS (matemática do VU0, troca de contexto das janelas) foram desfeitas no commit `779d9b9`: a sensação de
+fluidez ficou pior. O que se aprendeu com elas está nas mensagens dos commits `7f1192d` e `5522529` (o custo de mostrar a
+imagem é quase todo a troca do contexto OpenGL entre as duas janelas, 1,5-3 ms por imagem).
+
+Falta: a mochila entre áreas diferentes (o Jogador 2 desliza pelo mapa), o Aku Aku que troca de dono, as janelas sem
+alternar quadros, e os ~85 pontos que ainda usam a troca de "o jogador" (tabela abaixo).
+
+Para compilar neste branch é preciso rodar `configure.py` uma vez (a 1.2.0 trouxe arquivos C++ novos) e depois o
+`coop\COMPILAR.bat`.
+
 ## O objetivo
 
 Tratar o jogo como se ele tivesse sido feito para dois jogadores desde o começo. Os dois Crashes são jogadores completos.
