@@ -5,11 +5,13 @@
 
 #include "hardware.h"
 #include "renderthread.h"
+#include "renderwork.h"
 #include "ee/vu.h"
 #include "ee/vu1translate.h"
 #include "png.h"
 #include "presenter.h"
 #include "settings.h"
+#include "smaa.h"
 #include "hw/hwgs.h"
 #include "hw/replace.h"
 #include "resolution.h"
@@ -30,6 +32,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -630,6 +634,20 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
     s32 width = 0;
     s32 height = 0;
     SDL_GetWindowSizeInPixels(target, &width, &height);
+    // SMAA (the anti-aliasing option's 4): the picture anti-aliased at its own size first (smaa.cpp), then drawn in its place as
+    // the picture is (made smaller when it's larger than the window)
+    if (p.antiAliasing == 4)
+    {
+        if (GLuint smoothed = NativeGraphics::SmaaPicture(texture, u0, v0, u1, v1, pictureWidth, pictureHeight); smoothed != 0)
+        {
+            texture = smoothed;
+            u0 = 0.0f;
+            v0 = 0.0f;
+            u1 = 1.0f;
+            v1 = 1.0f;
+        }
+    }
+
     // The hardware renderer shares the context: its state isn't the presenter's
     gl.BindFramebuffer(0x8D40, 0);
     gl.Disable(0x0BE2);
@@ -1102,6 +1120,102 @@ std::atomic<int> g_ScaleSetting{4};
 std::atomic<int> g_Supersample{1};
 // The window's height in pixels, as the main thread last saw it (the scale setting 0 goes by it)
 std::atomic<int> g_WindowPixelHeight{0};
+
+// ------------------------------------------------------------------------------------------------------- the shader programs
+// The hardware renderer's shader programs (one for each combination of the GS's states the game draws with) made at its start,
+// before anything's drawn, so play never waits for one being compiled (THE LIST 19: a frame waits for each new one, 10-20 ms
+// here with the driver's cache empty, far more on an old card and driver: a new area's first frames). Those this build's runs
+// drew the game with (KnownPrograms, for the shaders of KnownProgramsSource only: check_windows' runs and a walk through the
+// hub, with the default options) and those the player's own sessions made since (the settings folder's shaders.txt: each one
+// made while playing added, for the next start; another build's shaders start the list again)
+constexpr const char* ProgramsFile = "shaders.txt";
+constexpr u32 KnownProgramsSource = 0x9999cb7c;
+constexpr u32 KnownPrograms[] = {
+    0x00000000, 0x00000009, 0x00000209, 0x0000020f, 0x00000a09, 0x00001000, 0x00001209, 0x00003209,
+    0x00003609, 0x00004009, 0x00004209, 0x00040000, 0x00040009, 0x000401a9, 0x00040209, 0x00044000,
+    0x00044009, 0x000441a9, 0x000443a9, 0x00048009, 0x000481a9, 0x0004c009, 0x0004c1a9, 0x000601a9,
+    0x000641a9, 0x000681a9, 0x00081000, 0x0008120b, 0x000c020b, 0x001c4000, 0x00441000, 0x0084020b,
+    0x008c020b, 0x01001209, 0x01001609, 0x020c020b, 0x04048009, 0x040481a9, 0x0404c009, 0x0404c1a9,
+    0x040681a9,
+};
+// The list's source and the bits in it (the render thread's)
+u32 g_ListedSource = 0;
+std::vector<u32> g_Listed;
+
+// The settings folder's list for the source (nothing when it's another source's or there's none)
+std::vector<u32> ReadProgramsList(u32 source)
+{
+    std::vector<u32> list;
+    std::ifstream in(std::filesystem::path(Native::SettingsFolder()) / ProgramsFile);
+    std::string line;
+    bool ours = false;
+    while (std::getline(in, line))
+    {
+        unsigned int value = 0;
+        if (line.rfind("source ", 0) == 0)
+        {
+            ours = std::sscanf(line.c_str() + 7, "%x", &value) == 1 && value == source;
+        }
+        else if (ours && !line.empty() && line[0] != '#' && std::sscanf(line.c_str(), "%x", &value) == 1)
+        {
+            list.push_back(value);
+        }
+    }
+
+    return list;
+}
+
+// A program made while playing: listed for the next start (the list started again for another source)
+void NoteProgramMade(u32 source, u32 bits)
+{
+    const std::filesystem::path path = std::filesystem::path(Native::SettingsFolder()) / ProgramsFile;
+    if (source != g_ListedSource)
+    {
+        g_ListedSource = source;
+        g_Listed.clear();
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        char header[32];
+        std::snprintf(header, sizeof(header), "source %08x\n", source);
+        out << "# The hardware renderer's shader programs made while playing (the GS's states' bits, one a line): each start makes\n"
+               "# them before anything's drawn, so play doesn't wait for them. For the shaders of the source below; another\n"
+               "# version's starts the list again\n"
+            << header;
+    }
+
+    if (std::find(g_Listed.begin(), g_Listed.end(), bits) != g_Listed.end())
+    {
+        return;
+    }
+
+    g_Listed.push_back(bits);
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    char line[16];
+    std::snprintf(line, sizeof(line), "%08x\n", bits);
+    out << line;
+}
+
+// The hardware renderer just started: its known programs made, the hook set for those made while playing
+void WarmPrograms()
+{
+    NativeGraphics::HardwareSetProgramHook(NoteProgramMade);
+    const u32 source = NativeGraphics::HardwareProgramSourceHash();
+    std::vector<u32> list = ReadProgramsList(source);
+    g_ListedSource = list.empty() ? 0 : source;
+    g_Listed = list;
+    const size_t listed = list.size();
+    const bool known = source == KnownProgramsSource;
+    if (known)
+    {
+        list.insert(list.end(), std::begin(KnownPrograms), std::end(KnownPrograms));
+    }
+
+    const auto from = std::chrono::steady_clock::now();
+    const u32 started = NativeGraphics::HardwareWarmPrograms(list);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count();
+    Native::Log("graphics: %u shader programs made at the start in %.0f ms (%zu listed in %s, %s)", started, ms, listed,
+                ProgramsFile, known ? (std::to_string(std::size(KnownPrograms)) + " this version's own").c_str()
+                                    : "this version's own list not for these shaders");
+}
 }
 
 namespace NativeGraphics
@@ -1159,6 +1273,7 @@ void ApplyGraphicsSettings()
         if (StartHardwareRenderer(scale))
         {
             GetHardware().gs->SetScale(1);
+            WarmPrograms();
         }
         else
         {
@@ -1203,6 +1318,11 @@ void NativeGraphicsSetDither(int mode)
     NativeGraphics::RenderCall([mode] { NativeGraphics::HardwareSetDither(mode); });
 }
 
+void NativeGraphicsSetAnisotropy(int samples)
+{
+    NativeGraphics::RenderCall([samples] { NativeGraphics::HardwareSetAnisotropy(samples); });
+}
+
 void NativeGraphicsSetTextureFiltering(int mode)
 {
     NativeGraphics::RenderCall([mode] { NativeGraphics::HardwareSetFiltering(mode); });
@@ -1223,8 +1343,9 @@ bool NativeGraphicsSetTexturePack(bool on)
 bool NativeGraphicsSetAntiAliasing(int mode)
 {
     // 0 off, 1 FXAA on the shown picture, 2 and 3 supersampling (the internal scale 2 and 4 times the setting's, up to 8: every
-    // target is read as a texture as well, so multisampled ones would have to be resolved at each read)
-    if (mode < 0 || mode > 3)
+    // target is read as a texture as well, so multisampled ones would have to be resolved at each read), 4 SMAA on the shown
+    // picture (smaa.cpp)
+    if (mode < 0 || mode > 4)
     {
         return false;
     }
@@ -1401,12 +1522,14 @@ void WaitForVBlank()
         g_GameWorkNanoseconds += static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(arrived - g_GameWorkFrom).count());
     }
 
-    // The log's frame counts (sessionlog.cpp: the performance lines)
-    Native::SessionFrame(g_GameWorkNanoseconds.load(std::memory_order_relaxed));
+    // The log's frame counts (sessionlog.cpp: the performance lines and the slow frames), as the frame's let go: a frame's time is
+    // the game's start of one to its start of the next (since 1.2.0: before, it was taken when the wait began, so a frame after
+    // one that waited long counted that wait too, up to a field more than the pictures took)
     struct Restart
     {
         ~Restart()
         {
+            Native::SessionFrame(g_GameWorkNanoseconds.load(std::memory_order_relaxed));
             g_GameWorkFrom = std::chrono::steady_clock::now();
         }
     } restart;
@@ -1577,6 +1700,8 @@ Picture g_PictureForCaller;
 // On the render thread: the frame's picture into its slot, then the settings applied (as ShowFrameHere does)
 void MakeShown(u64 frame)
 {
+    // (The log's split of the render thread's time: the picture handed over, its OpenGL calls and waits included)
+    WorkSpan work(Work::Picture);
     static const bool dumping = std::getenv("TWIN_DUMP_FRAMES") != nullptr;
     Shown& shown = g_Shown[frame % 3];
     g_PictureStale = true;
@@ -1696,6 +1821,13 @@ void ThreadedFrameStats(const Shown* shown)
 
 // Without the render thread: the picture read out and shown at once
 void ShowFrameHere();
+// The window's present's time (renderthread.h's PresentNanoseconds)
+std::atomic<u64> g_PresentNanoseconds{0};
+}
+
+u64 PresentNanoseconds()
+{
+    return g_PresentNanoseconds.load(std::memory_order_relaxed);
 }
 
 namespace
@@ -1769,6 +1901,7 @@ void ShowFrame()
         // views alternated, every other frame each, when two frames ago is the same view as now. With each window at its own rate
         // the other player's pictures came into a window: the first player's window showed both views, frame by frame)
         const int view = views[(frame + 1) % 3];
+        const auto presenting = std::chrono::steady_clock::now();
         g_PresentTarget = WindowForView(view);
         PresentShown(before);
         g_PresentTarget = nullptr;
@@ -1783,6 +1916,8 @@ void ShowFrame()
                 g_PresentTarget = nullptr;
             }
         }
+        g_PresentNanoseconds += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - presenting).count());
 
         shown = &before;
     }
@@ -1811,6 +1946,16 @@ void ShowFrameHere()
     g_PictureStale = true;
     // The hardware renderer's picture is drawn straight from its target
     DisplayTexture gpu;
+    const auto presenting = std::chrono::steady_clock::now();
+    struct Presented
+    {
+        std::chrono::steady_clock::time_point from;
+        ~Presented()
+        {
+            g_PresentNanoseconds += static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - from).count());
+        }
+    } presented{presenting};
     if (HardwareRendererActive() && HardwareDisplayTexture(&gpu))
     {
         if (g_Presenter.window != nullptr)

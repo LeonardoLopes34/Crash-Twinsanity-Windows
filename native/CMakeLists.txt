@@ -5,7 +5,7 @@
 # The retail data comes from the split as C++ (native/tools/convert_data.py writes build/native/data.cpp; this build runs it).
 # See native/NATIVE.md.
 cmake_minimum_required(VERSION 3.24)
-project(TwinsanityNative VERSION 1.1.0 LANGUAGES CXX)
+project(TwinsanityNative VERSION 1.2.0 LANGUAGES CXX)
 
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # C++26 like the PS2 build's gnu++26 (CMake doesn't know AppleClang has it and would fall back to C++23)
@@ -280,6 +280,8 @@ if(WIN32)
     target_link_libraries(twinsanity PRIVATE winmm)
     # Online co-op's sockets (src/platform/native/coop/coopnet.cpp)
     target_link_libraries(twinsanity PRIVATE ws2_32)
+    # The update check's one HTTPS request (src/platform/native/updatecheck.cpp: Windows' own WinHTTP)
+    target_link_libraries(twinsanity PRIVATE winhttp)
     # The program's icon (native/icon/AppIcon.ico, 16 to 256 pixels, drawn by native/tools/draw_icon.py) and its version
     # information, as resources (SDL's window takes icon 1 too)
     set(TWIN_ICON ${CMAKE_CURRENT_SOURCE_DIR}/icon/AppIcon.ico)

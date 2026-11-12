@@ -37,6 +37,7 @@
 #include "xxhash.h"
 
 #include "../png.h"
+#include "../renderwork.h"
 
 #include "../hardware.h"
 #include "../gs/backend.h"
@@ -48,6 +49,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -55,6 +57,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -240,6 +243,10 @@ struct Target
     Gs::PageSet valid;
     // The pages it holds newest with every other target's copy out of date (MarkDrawn has nothing to do there)
     Gs::PageSet owned;
+    // The pages whose content it drew itself (at its scale), not memory's loaded into it: only there is it a texture's source
+    // (THE LIST 16: textures the CPU uploads where an old buffer of the same address and width was, Ant Agony's walls at
+    // 2800/4 where bossarea's sky had been drawn, read from it at its scale were blocks of 3x3 replicated texels)
+    Gs::PageSet drawn;
     // A colour target's float buffer of wrapping sums not yet added to it (resolve), its framebuffers by depth-stencil buffer
     GLuint accum = 0;
     bool accumPending = false;
@@ -384,6 +391,9 @@ enum ProgramBits : u32
     BitFullColour = 1u << 24,
     // The game's colour filter: its palette's indexes the depth's bits 8-15 at the sample itself (DepthIndexColour)
     BitDepthIndex = 1u << 25,
+    // Anisotropic filtering (the PC option): the GS's level of detail kept along the texture's short axis, sampled along the
+    // long one (textureGrad's gradients scaled to the GS's level, the card's anisotropy on)
+    BitAniso = 1u << 26,
 };
 
 constexpr const char* VertexSource = R"(#version 330 core
@@ -541,6 +551,15 @@ void main()
     }
 #if DEPTHINDEX
     vec4 t = DepthIndexColour();
+#elif ANISO
+    // The card's level for the screen's gradients along their long axis made the GS's: the gradients scaled by the difference,
+    // so the card samples along the long axis at the GS's level (sharper as the surface turns away: anisotropic filtering)
+    vec2 along = dFdx(uv / texActual);
+    vec2 down = dFdy(uv / texActual);
+    vec2 texels = vec2(textureSize(tex, 0));
+    float card = log2(max(max(length(along * texels), length(down * texels)), 1e-6));
+    float toGs = exp2(lod - card);
+    vec4 t = floor(textureGrad(tex, uv / texActual, along * toGs, down * toGs) * 255.0 + 0.5);
 #else
     vec4 t = floor(textureLod(tex, uv / texActual, lod) * 255.0 + 0.5);
 #endif
@@ -1064,6 +1083,11 @@ void main()
 struct Program
 {
     GLuint id = 0;
+    // Made at the start (WarmPrograms) and not drawn with yet: its compile and link asked for, its status and uniforms not, its
+    // shaders kept for their messages
+    bool pending = false;
+    GLuint vertex = 0;
+    GLuint fragment = 0;
     GLint viewSize;
     GLint viewOrigin;
     GLint depthCopy;
@@ -1289,6 +1313,16 @@ private:
     void MarkDrawn(Target* target, const FewPages& few);
     bool Fallback(const Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count, const Rect& rect, const char* why);
     const Program& ProgramFor(u32 bits);
+    // A program's shaders compiled and linked without asking how it went (a driver that compiles on threads of its own goes on
+    // meanwhile), and its status and uniforms taken (false when it didn't compile or link: its messages printed)
+    Program StartProgram(u32 bits);
+    bool FinishProgram(Program& p);
+
+public:
+    // The programs of a list made now, before anything's drawn with them (those already made left); how many were started
+    u32 WarmPrograms(const std::vector<u32>& list);
+
+private:
     GLuint FramebufferFor(Target* colour, Target* depth);
     GLuint CopyOf(Target* target);
     GLuint CopyTarget(Target* target, const Rect* region = nullptr);
@@ -1347,6 +1381,7 @@ private:
         u32 clut = 0;
         u64 targetsVersion = 0;
         int filterMode = 0;
+        int anisotropy = 1;
         int ditherMode = 0;
         Target* colour = nullptr;
         Target* depth = nullptr;
@@ -1503,6 +1538,12 @@ std::atomic<bool> g_HwActive{false};
 constexpr GLint BigViewSize = 16384;
 constexpr GLint BigViewOrigin = 4096;
 // Where a vertex goes past x / 16 * scale + 0.5, in pixels (TWIN_HW_VERTEX_OFFSET, 256ths)
+// The hook told of each program made while drawing (StartHardwareRenderer's caller's: the next start makes it first)
+void (*g_ProgramMade)(u32 sourceHash, u32 bits) = nullptr;
+
+// The programs' source (the vertex and fragment shaders, $TWIN_HW_VERTEX_OFFSET's shift): a list of programs' bits is for it only
+u32 ProgramSourceHash();
+
 f32 VertexNudge()
 {
     static const f32 nudge = std::getenv("TWIN_HW_VERTEX_OFFSET") != nullptr ? static_cast<f32>(std::atof(std::getenv("TWIN_HW_VERTEX_OFFSET"))) / 256.0f
@@ -1511,6 +1552,32 @@ f32 VertexNudge()
 }
 int g_DitherMode = 2;
 int g_FilterMode = 0;
+// Anisotropic filtering's most samples (1: off, the PS2's; 2, 4, 8 or 16: the PC option, clamped to the card's most)
+int g_Anisotropy = 1;
+
+// The card's most samples (GL_MAX_TEXTURE_MAX_ANISOTROPY, core since 4.6 and EXT_texture_filter_anisotropic's before; 1 when it
+// has none), asked once, the renderer's context current, the first time the option filters a texture
+int AnisotropyMost()
+{
+    static const int most = [] {
+        GLfloat value = 0.0f;
+        auto getFloat = reinterpret_cast<void (*)(GLenum, GLfloat*)>(SDL_GL_GetProcAddress("glGetFloatv"));
+        Gl& gl = GetGl();
+        while (gl.GetError() != GL_NO_ERROR)
+        {
+        }
+
+        if (getFloat != nullptr)
+        {
+            getFloat(0x84FF, &value);
+        }
+
+        const int found = gl.GetError() == GL_NO_ERROR && value >= 1.0f ? static_cast<int>(value) : 1;
+        std::fprintf(stderr, "graphics: anisotropic filtering up to %dx on this card\n", found);
+        return found;
+    }();
+    return most;
+}
 
 HwGs::~HwGs()
 {
@@ -1593,14 +1660,9 @@ bool HwGs::Init()
     return true;
 }
 
-const Program& HwGs::ProgramFor(u32 bits)
+// A program's defines: the GS's states its bits say
+std::string ProgramDefines(u32 bits)
 {
-    auto found = programs_.find(bits);
-    if (found != programs_.end())
-    {
-        return found->second;
-    }
-
     std::string header = "#version 330 core\n";
     auto define = [&](const char* name, u32 value) { header += "#define " + std::string(name) + " " + std::to_string(value) + "\n"; };
     define("TEXTURED", (bits & BitTextured) ? 1 : 0);
@@ -1626,13 +1688,82 @@ const Program& HwGs::ProgramFor(u32 bits)
     define("WRAPADD", (bits & BitWrapAdd) ? 1 : 0);
     define("NATIVEDEPTH", (bits & BitNativeDepth) ? 1 : 0);
     define("DEPTHINDEX", (bits & BitDepthIndex) ? 1 : 0);
-    GLuint vertex = CompileShader(GL_VERTEX_SHADER, VertexSource);
-    GLuint fragment = CompileShader(GL_FRAGMENT_SHADER, header + FragmentSource);
+    define("ANISO", (bits & BitAniso) ? 1 : 0);
+    return header;
+}
+
+u32 ProgramSourceHash()
+{
+    // (FNV-1a over the shaders and the defines of no bits and of every bit: what the bits mean)
+    static const u32 hash = [] {
+        u32 h = 2166136261u;
+        auto mix = [&h](const std::string& text) {
+            for (char c : text)
+            {
+                h = (h ^ static_cast<u8>(c)) * 16777619u;
+            }
+        };
+        mix(VertexSource);
+        mix(FragmentSource);
+        mix(ProgramDefines(0));
+        mix(ProgramDefines(~0u));
+        return h;
+    }();
+    return hash;
+}
+
+Program HwGs::StartProgram(u32 bits)
+{
+    const std::string header = ProgramDefines(bits);
     Gl& gl = GetGl();
     Program p;
-    p.id = LinkProgram(vertex, fragment, true);
-    gl.DeleteShader(vertex);
-    gl.DeleteShader(fragment);
+    p.vertex = gl.CreateShader(GL_VERTEX_SHADER);
+    const char* vertexText = VertexSource;
+    gl.ShaderSource(p.vertex, 1, &vertexText, nullptr);
+    gl.CompileShader(p.vertex);
+    p.fragment = gl.CreateShader(GL_FRAGMENT_SHADER);
+    const std::string fragmentSource = header + FragmentSource;
+    const char* fragmentText = fragmentSource.c_str();
+    gl.ShaderSource(p.fragment, 1, &fragmentText, nullptr);
+    gl.CompileShader(p.fragment);
+    p.id = gl.CreateProgram();
+    gl.AttachShader(p.id, p.vertex);
+    gl.AttachShader(p.id, p.fragment);
+    gl.BindFragDataLocationIndexed(p.id, 0, 0, "outColour");
+    gl.BindFragDataLocationIndexed(p.id, 0, 1, "outFactor");
+    gl.LinkProgram(p.id);
+    p.pending = true;
+    return p;
+}
+
+bool HwGs::FinishProgram(Program& p)
+{
+    Gl& gl = GetGl();
+    GLint linked = 0;
+    gl.GetProgramiv(p.id, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        char log[2048];
+        for (GLuint shader : {p.vertex, p.fragment})
+        {
+            GLint compiled = 0;
+            gl.GetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+            if (!compiled)
+            {
+                gl.GetShaderInfoLog(shader, sizeof(log), nullptr, log);
+                std::fprintf(stderr, "graphics: hardware shader: %s\n", log);
+            }
+        }
+
+        gl.GetProgramInfoLog(p.id, sizeof(log), nullptr, log);
+        std::fprintf(stderr, "graphics: hardware program: %s\n", log);
+        return false;
+    }
+
+    gl.DeleteShader(p.vertex);
+    gl.DeleteShader(p.fragment);
+    p.vertex = 0;
+    p.fragment = 0;
     p.viewSize = gl.GetUniformLocation(p.id, "viewSize");
     p.viewOrigin = gl.GetUniformLocation(p.id, "viewOrigin");
     p.depthCopy = gl.GetUniformLocation(p.id, "depthCopy");
@@ -1670,6 +1801,83 @@ const Program& HwGs::ProgramFor(u32 bits)
     p.frameMask = gl.GetUniformLocation(p.id, "frameMask");
     p.clut = gl.GetUniformLocation(p.id, "clut");
     p.clutOffset = gl.GetUniformLocation(p.id, "clutOffset");
+    p.pending = false;
+    return true;
+}
+
+u32 HwGs::WarmPrograms(const std::vector<u32>& list)
+{
+    // As many of the driver's threads as it likes (0xFFFFFFFF), where it has them
+    if (GetGl().MaxShaderCompilerThreads != nullptr)
+    {
+        GetGl().MaxShaderCompilerThreads(0xFFFFFFFFu);
+    }
+
+    std::vector<u32> started;
+    for (u32 bits : list)
+    {
+        if (programs_.find(bits) == programs_.end())
+        {
+            programs_[bits] = StartProgram(bits);
+            started.push_back(bits);
+        }
+    }
+
+    // All asked for first, then each waited for here (a driver with threads has compiled them side by side meanwhile; measured,
+    // one left to its first draw made that frame wait for the driver's last of the work): play finds them ready. One that
+    // doesn't compile (a list's stale entry) is dropped
+    u32 made = 0;
+    for (u32 bits : started)
+    {
+        auto found = programs_.find(bits);
+        if (FinishProgram(found->second))
+        {
+            made++;
+        }
+        else
+        {
+            programs_.erase(found);
+        }
+    }
+
+    return made;
+}
+
+const Program& HwGs::ProgramFor(u32 bits)
+{
+    auto found = programs_.find(bits);
+    if (found != programs_.end() && !found->second.pending)
+    {
+        return found->second;
+    }
+
+    // One made at the start, drawn with for the first time: done by now (or waited for); one that failed is made again below
+    if (found != programs_.end())
+    {
+        if (FinishProgram(found->second))
+        {
+            return found->second;
+        }
+
+        programs_.erase(found);
+    }
+
+    // A program not made before: made now, the frame waiting for it (its time counted for the log's slow frames, renderwork.h),
+    // and said to the hook to be made at the next start
+    const auto madeFrom = std::chrono::steady_clock::now();
+    Program p = StartProgram(bits);
+    if (!FinishProgram(p))
+    {
+        std::abort();
+    }
+
+    NativeGraphics::CountProgramMade(
+        static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - madeFrom).count()));
+    if (g_ProgramMade != nullptr)
+    {
+        g_ProgramMade(ProgramSourceHash(), bits);
+    }
+
     return programs_[bits] = p;
 }
 
@@ -2875,6 +3083,7 @@ void HwGs::TargetFromMem(Target* target, const Gs::PageSet& pages)
 {
     Gl& gl = GetGl();
     stats.uploads++;
+    target->drawn &= ~pages;
     TraceConversion("into", target, pages);
     static const bool counting = std::getenv("TWIN_HW_STATS") != nullptr;
     if (counting)
@@ -3228,6 +3437,7 @@ void HwGs::ProcessWrites()
     {
         target->valid &= ~written;
         target->owned &= ~written;
+        target->drawn &= ~written;
     }
 }
 
@@ -3532,6 +3742,7 @@ void HwGs::Upload(Target* target, const Gs::PageSet& pages)
 
     Gs::PageSet uploaded = pages & target->pages;
     target->valid |= uploaded;
+    target->drawn &= ~uploaded;
     target->alphaVersion++;
     // Another target holding these pages newest has a copy elsewhere now
     for (auto& other : targets_)
@@ -3623,10 +3834,12 @@ void HwGs::MarkDrawn(Target* target, const Gs::PageSet& pages)
         {
             other->valid &= ~drawn;
             other->owned &= ~drawn;
+            other->drawn &= ~drawn;
         }
     }
 
     target->owned |= drawn;
+    target->drawn |= drawn;
 }
 
 bool HwGs::Fallback(const Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count, const Rect& rect, const char* why)
@@ -4188,6 +4401,13 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             key.lodL = state.l;
             key.mxl = state.mxl;
             program |= BitMipmap | (state.lodConstant ? BitLodConstant : 0);
+            // Anisotropic filtering (off: 1, the PS2's sampling): the game's bilinear mipmapped textures whose level of detail
+            // goes by the distance (the GS's own formula's)
+            if (g_Anisotropy > 1 && state.magLinear && !state.lodConstant && AnisotropyMost() > 1)
+            {
+                key.anisotropy = static_cast<u32>(std::min(g_Anisotropy, AnisotropyMost()));
+                program |= BitAniso;
+            }
         }
 
         s32 left = 0;
@@ -4198,6 +4418,10 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         s32 t = 0;
         s32 r = 0;
         s32 b = 0;
+        // A repeating texture whose coordinates stay inside it (it doesn't repeat): only such a one may be read from a target
+        // below, whose edge clamps
+        bool insideS = false;
+        bool insideT = false;
         if (Gs::TextureRegionForDraw(state, vertexes, count, &l, &t, &r, &b))
         {
             // The region is the bilinear filter's (the texel before the first: -1 at 0); the nearest texels at UV coordinates,
@@ -4212,6 +4436,8 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
             // As the decoder takes it: a clamped coordinate's range clamped, a repeating one's whole unless it stays inside
             s32 w = static_cast<s32>(level.width);
             s32 h = static_cast<s32>(level.height);
+            insideS = l >= 0 && r < w;
+            insideT = t >= 0 && b < h;
             if (state.wms == Gs::WrapClamp || (l >= 0 && r < w))
             {
                 left = std::clamp(l, 0, w - 1);
@@ -4245,22 +4471,34 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         // A target's own buffer in its own layout (no mipmaps; its rectangle within the target)
         Target* source = nullptr;
         u32 sourceClass = ClassOf(level.psm);
-        if (!depthIndex && level.cacheId == nullptr && !state.mipmapped && sourceClass != ClassNone && !IsDepthClass(sourceClass) &&
-            right >= left && bottom >= top)
+        // ($TWIN_HW_NO_TARGET_TEXTURES: never, every texture decoded from memory's copy: to tell this way's drawing from the
+        // decoder's)
+        static const bool noTargetTextures = std::getenv("TWIN_HW_NO_TARGET_TEXTURES") != nullptr;
+        if (!noTargetTextures && !depthIndex && level.cacheId == nullptr && !state.mipmapped && sourceClass != ClassNone &&
+            !IsDepthClass(sourceClass) && right >= left && bottom >= top)
         {
             for (auto& known : targets_)
             {
                 // The region the draw reads inside the target (a repeating texture whose coordinates stay inside it doesn't
-                // repeat)
+                // repeat; one whose coordinates go past it repeats, which the target's clamped edge can't: its region above is
+                // the whole texture, inside the target, so it's the coordinates that tell. THE LIST 16: Ant Agony's tiled walls
+                // and doors at 2800/4, read from bossarea's sky's buffer there once it had been drawn, were streaked from the
+                // clamped edge)
                 // (two texels past its edge allowed: a sprite's end coordinate is past its last pixel's and the region reaches
                 // one more for the filter; the filter's weight there is nothing and the sampler clamps)
                 if (known->complete && known->bp == level.bp && known->bw == level.bw && known->cls == sourceClass && left >= 0 &&
                     top >= 0 &&
                     static_cast<u32>(right) <= known->width + 1 && static_cast<u32>(bottom) <= known->height + 1 &&
-                    (state.wms == Gs::WrapClamp || static_cast<u32>(right) < level.width) &&
-                    (state.wmt == Gs::WrapClamp || static_cast<u32>(bottom) < level.height))
+                    (state.wms == Gs::WrapClamp || insideS) && (state.wmt == Gs::WrapClamp || insideT))
                 {
-                    source = known.get();
+                    // ... where it drew: memory's content loaded into it is decoded from memory, as with no target there
+                    Gs::PageSet regionPages;
+                    RectPages(known.get(), Rect{left, top, std::min(right, static_cast<s32>(known->width) - 1),
+                                                std::min(bottom, static_cast<s32>(known->height) - 1)}, regionPages);
+                    if ((regionPages & known->drawn).any())
+                    {
+                        source = known.get();
+                    }
                 }
             }
         }
@@ -4281,6 +4519,22 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         }
         else if (source != nullptr)
         {
+            // $TWIN_HW_SOURCE_TRACE: each kind of texture read from a target rather than decoded from memory, once
+            static const bool sourceTrace = std::getenv("TWIN_HW_SOURCE_TRACE") != nullptr;
+            if (sourceTrace)
+            {
+                static std::set<u64> told;
+                const u64 kind = static_cast<u64>(level.bp) | static_cast<u64>(level.bw) << 14 | static_cast<u64>(level.psm) << 20 |
+                                 static_cast<u64>(source->psm) << 26 | static_cast<u64>(level.width) << 32 |
+                                 static_cast<u64>(level.height) << 44;
+                if (told.insert(kind).second)
+                {
+                    std::fprintf(stderr, "graphics: a %ux%u texture at %x/%u (psm %u) read from the target %x/%u (psm %u, %ux%u at %ux)\n",
+                                 level.width, level.height, level.bp, level.bw, level.psm, source->bp, source->bw, source->psm,
+                                 source->width, source->height, source->scale);
+                }
+            }
+
             repeatable = false;
             Gs::PageSet pages;
             RectPages(source, Rect{left, top, std::min(right, static_cast<s32>(source->width) - 1),
@@ -4752,6 +5006,7 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
         last_.clut = gs_.clutVersion();
         last_.targetsVersion = targetsVersion_;
         last_.filterMode = g_FilterMode;
+        last_.anisotropy = g_Anisotropy;
         last_.ditherMode = g_DitherMode;
         last_.colour = colour;
         last_.depth = depth;
@@ -4771,7 +5026,8 @@ bool HwGs::DrawLikeLast(const Gs::Gs::DrawState& state, const Gs::Vertex* vertex
     static const bool off = std::getenv("TWIN_HW_NO_FAST_DRAW") != nullptr;
     const LastDraw& last = last_;
     if (off || !last.valid || last.generation != gs_.stateGeneration() || last.clut != gs_.clutVersion() ||
-        last.targetsVersion != targetsVersion_ || last.filterMode != g_FilterMode || last.ditherMode != g_DitherMode)
+        last.targetsVersion != targetsVersion_ || last.filterMode != g_FilterMode || last.ditherMode != g_DitherMode ||
+        last.anisotropy != g_Anisotropy)
     {
         return false;
     }
@@ -5889,6 +6145,27 @@ bool HardwareRendererActive()
     return g_HwActive.load(std::memory_order_relaxed);
 }
 
+void HardwareSetProgramHook(void (*made)(u32 sourceHash, u32 bits))
+{
+    g_ProgramMade = made;
+}
+
+u32 HardwareProgramSourceHash()
+{
+    return ProgramSourceHash();
+}
+
+u32 HardwareWarmPrograms(const std::vector<u32>& bits)
+{
+    if (g_Hw == nullptr)
+    {
+        return 0;
+    }
+
+    g_Hw->MakeCurrent();
+    return g_Hw->WarmPrograms(bits);
+}
+
 void HardwareSetScale(u32 scale)
 {
     if (g_Hw != nullptr)
@@ -5935,6 +6212,17 @@ void HardwareSetFiltering(int mode)
     }
 
     g_FilterMode = std::clamp(mode, 0, 2);
+}
+
+void HardwareSetAnisotropy(int samples)
+{
+    if (g_Hw != nullptr)
+    {
+        g_Hw->Flush();
+    }
+
+    // (The card's most is asked the first time a texture is filtered: AnisotropyMost)
+    g_Anisotropy = std::clamp(samples, 1, 16);
 }
 
 HardwareStats GetHardwareStats()

@@ -45,6 +45,8 @@
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
 #include "native.h"
+#include "cutsceneskip.h"
+#include "gameoptions.h"
 #include "ui/nativeui.h"
 #endif
 
@@ -414,6 +416,15 @@ u32 GameController::Update(u32 keepFreed)
     }
 
     oleg.Update(&g_GlobalClock, pad, character);
+#ifdef TWIN_NATIVE
+    // The cutscene skip's end once play starts again, or given back when it stalls (THE LIST 28, cutsceneskip.h)
+    StepCutsceneSkip(State(), NextState());
+    if (CutsceneSkipStalled() != 0)
+    {
+        EndCutsceneSkip();
+        oleg.Hide(oleg.screens[OLEG::ScreenBlack], static_cast<s32>(g_ClockUnitsPerSecond * FadeSeconds), 0);
+    }
+#endif
     if (State() != StatePlaying && State() != StateWatching)
     {
         return 0;
@@ -456,7 +467,7 @@ u32 GameController::Starting(TimeClock*)
     StringConstruct(&voices, SoundFolder);
     g_SaveManager = SaveManager::Construct(static_cast<SaveManager*>(MemoryAllocate(sizeof(SaveManager))), this);
     LoadTexts();
-    StringAppend(&voices, g_LanguageNames[g_CurrentLanguage]);
+    StringAppend(&voices, g_LanguageNames[SpeechLanguage()]);
     SetMusicBank(MusicBank);
     SetVoiceBank(voices.string);
     String icons;
@@ -1040,6 +1051,14 @@ u32 GameController::EndCutscene(s32 duration)
     u32 state = State();
     if (state == StateWatching)
     {
+#ifdef TWIN_NATIVE
+        // A skip is over with the cutscene (what starts after its end keeps its waits: cutsceneskip.h), the screen shown again
+        if (CutsceneSkipping() != 0)
+        {
+            EndCutsceneSkip();
+            oleg.Hide(oleg.screens[OLEG::ScreenBlack], static_cast<s32>(g_ClockUnitsPerSecond * FadeSeconds), 0);
+        }
+#endif
         flags.unused3 = 0;
         SetNextState(StateStartingPlay);
         oleg.Hide(oleg.screens[OLEG::ScreenCutscene], duration, 0);
@@ -1130,8 +1149,11 @@ u32 GameController::RestartFromCheckpoint()
         progress.counts.lives = 3;
         Native::Log("second player: the lives were out, filled up (no game over with two players)");
     }
-#endif
+    // Infinite lives (the game option): no game over for want of lives, the count left as it is (none: the last life goes on)
+    if (progress.counts.lives == 0 && !NativeGame::InfiniteLives())
+#else
     if (progress.counts.lives == 0)
+#endif
     {
         return ForceGameOver();
     }
@@ -1330,6 +1352,26 @@ u32 GameController::Watching(TimeClock* clock)
         G_VideoController->Skip();
     }
 
+#ifdef TWIN_NATIVE
+    // The cutscene skip of the scenes no skip rule (condition 572) ends (THE LIST 28, cutsceneskip.h): held as the skip option
+    // has it, the cutscene's waits end in their order from here, the screen black meanwhile (shown again at its end)
+    if (CutsceneSkipping() == 0 && CutsceneSkipAsked() != 0)
+    {
+        StartCutsceneSkip();
+        if (CutsceneSkipping() != 0)
+        {
+            // as FadingOut fades to black (the fader's colours a script's fade may have set otherwise)
+            u32 hidden;
+            u32 shown;
+            GetColor(&hidden, ColourTransparentBlack);
+            GetColor(&shown, ColourBlack);
+            oleg.fader.hiddenColour = hidden;
+            oleg.fader.shownColour = shown;
+            oleg.Show(oleg.screens[OLEG::ScreenBlack], static_cast<s32>(g_ClockUnitsPerSecond * ShortFadeSeconds), 0);
+        }
+    }
+#endif
+
     return NoState;
 }
 
@@ -1492,7 +1534,7 @@ u32 GameController::PlayMovie(TimeClock* clock, s32 delay, u32 index, u32 skippa
     {
         const GameMovie& movie = g_Movies[index];
         // The story's movies have an audio channel for each language
-        u32 channel = movie.bits.audioChannels == 1 ? 0 : g_CurrentLanguage;
+        u32 channel = movie.bits.audioChannels == 1 ? 0 : SpeechLanguage();
         movieFrame = frame;
         oleg.Hide(oleg.screens[OLEG::ScreenBlack], shortFade, 0);
         s32 width = movie.bits.width;

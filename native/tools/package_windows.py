@@ -5,7 +5,7 @@ build/native/dist/Crash Twinsanity/ and build/native/dist/Crash-Twinsanity-Windo
     .venv\\Scripts\\python.exe native\\tools\\package_windows.py [--build build/native/cmake]
 
 The folder holds CrashTwinsanity.exe, SDL's and FFmpeg's DLLs, the UI's fonts, the libraries' licences and the player's guide
-(native/PLAYING_WINDOWS.md as README.txt). Nothing of the game's: the player picks their own disc image. Nothing of a player's
+(native/PLAYING_WINDOWS.md as README.txt, native/MODDING.md as MODDING.txt). Nothing of the game's: the player picks their own disc image. Nothing of a player's
 either: the folder can be played from, and portable mode's portable.txt and User folder there (or a disc image) are left where
 they are and never zipped.
 """
@@ -58,6 +58,11 @@ def main():
     for name in ("LICENSE-LuckiestGuy.txt", "OFL-Fredoka.txt", "README.md"):
         shutil.copy2(HERE / "native" / "third_party" / "fonts" / name, licenses / f"fonts-{name}")
     shutil.copy2(HERE / "native" / "third_party" / "stb" / "LICENSE.txt", licenses / "stb-LICENSE.txt")
+    # SMAA (iryoku's, MIT)
+    shutil.copy2(HERE / "native" / "third_party" / "smaa" / "LICENSE.txt", licenses / "SMAA-LICENSE.txt")
+    # TwinsanityEvolved's MIT code (its README says which files)
+    for name in ("LICENSE-TwinsanityEvolved.txt", "LICENSE-NativeEE.txt", "README.md"):
+        shutil.copy2(HERE / "native" / "third_party" / "twinsanityevolved" / name, licenses / f"twinsanityevolved-{name}")
     # The port's own licence (what it covers is in it)
     shutil.copy2(HERE / "LICENSE", licenses / "Crash-Twinsanity-Windows-LICENSE.txt")
     deps = Path(arguments.deps)
@@ -77,6 +82,8 @@ def main():
             shutil.copy2(prebuilt, ffmpeg / "LICENSE-prebuilt.txt")
 
     shutil.copy2(HERE / "native" / "PLAYING_WINDOWS.md", folder / "README.txt")
+    # The modding guide beside it (README.txt links it)
+    shutil.copy2(HERE / "native" / "MODDING.md", folder / "MODDING.txt")
 
     archive = dist / "Crash-Twinsanity-Windows.zip"
     if archive.exists():

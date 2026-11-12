@@ -5,11 +5,14 @@
 // controls tab is a table of the game's actions by the keyboard's two keys and the controller's button. It takes the keyboard
 // (arrows, Enter, Escape, Q/E or Tab for the tabs), the pads (the D-pad or the stick, A and B, the shoulders for the tabs) and the
 // mouse (hover, click, the wheel, the tabs and the arrows, a slider dragged) while it's open; the game reads nothing meanwhile
+#include "ui/pctext.h"
 #include "ui/settingsmodel.h"
 #include "ui/overlay.h"
 
 #include "native.h"
+#include "mods.h"
 #include "renderdistance.h"
+#include "updatecheck.h"
 
 #include "game/controllers.h"
 #include "game/gamecontroller.h"
@@ -22,12 +25,16 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 // The graphics' texture and picture settings (src/platform/native/graphics/): until they're there these weak
@@ -54,7 +61,7 @@ namespace NativeUi
 namespace
 {
 // ------------------------------------------------------------------------------------------------------------------- the rows
-constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility};
+constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility, TextTabMods};
 constexpr u32 Columns = BindingColumns;
 // The draw distance's choices from the shortest to the farthest, so left is less and right more (options.txt keeps
 // renderdistance.h's codes, whatever this order)
@@ -62,6 +69,31 @@ constexpr u32 DistanceOrder[] = {Native::DistanceShort, Native::DistanceOriginal
                                  Native::DistanceUnlimited};
 constexpr u32 DistanceTexts[] = {TextDistanceShort, TextDistanceOriginal, TextDistanceMedium, TextDistanceLong, TextUnlimited};
 constexpr s32 DistanceChoices = static_cast<s32>(std::size(DistanceOrder));
+
+// The anti-aliasing's choices by cost, so right is smoother and slower (options.txt keeps its numbers: 4 is SMAA)
+constexpr s32 AntiAliasingOrder[] = {0, 1, 4, 2, 3};
+constexpr u32 AntiAliasingTexts[] = {0, TextFxaa, TextSmaa, TextSsaa2, TextSsaa4};
+constexpr s32 AntiAliasingChoices = static_cast<s32>(std::size(AntiAliasingOrder));
+
+// The resolution chosen while its row is stepped (THE LIST 41, #39): applied once the choice settles (the row left, the screen
+// closed, or PendingSeconds after the last step), not at each step (stepping left from 1x wraps round to 8x: a laptop's 451 MB
+// card drew 8x and back while its player went through the choices). -1: none waiting
+s32 g_PendingScale = -1;
+std::chrono::steady_clock::time_point g_PendingAt;
+constexpr f32 PendingSeconds = 0.75f;
+
+void ApplyPendingResolution()
+{
+    if (g_PendingScale < 0)
+    {
+        return;
+    }
+
+    Resolution resolution = CurrentResolution();
+    resolution.scale = Scales[std::clamp(g_PendingScale, 0, ScaleChoices - 1)];
+    g_PendingScale = -1;
+    SetResolution(resolution);
+}
 
 std::vector<Row> g_Rows[Pages];
 bool g_Built = false;
@@ -165,6 +197,10 @@ void SetVibration(s32 value)
 void OpenScreenPosition();
 void SelectTab(u32 tab);
 void AskPortable(bool portable);
+void OpenDialog(PortableDialog dialog);
+void Close();
+// The level select's level (its row's choice, kept while the program runs)
+s32 g_LevelSelectChoice = 0;
 
 // The display mode (window or fullscreen) and the window's size: the windows' sizes are the display choices but the last
 s32 WindowSizeChoice()
@@ -172,6 +208,199 @@ s32 WindowSizeChoice()
     Resolution current = CurrentResolution();
     current.fullscreen = false;
     return DisplayChoice(current);
+}
+
+// ------------------------------------------------------------------------------------------------------------------ the mods
+// A mod's words for the overlay: its Windows-1252, the prompts' glyphs ([ ] { } \ ^ ...) made plain characters
+std::string OverlayWords(const std::string& utf8)
+{
+    std::string text;
+    ToGameText(utf8.c_str(), &text);
+    for (char& c : text)
+    {
+        if (c == '[' || c == '{')
+        {
+            c = '(';
+        }
+        else if (c == ']' || c == '}')
+        {
+            c = ')';
+        }
+        else if (std::strchr(PromptGlyphs, c) != nullptr)
+        {
+            c = ' ';
+        }
+    }
+
+    return text;
+}
+
+// A description cut to the view's one line
+std::string OneLine(std::string text)
+{
+    if (DescriptionWidth(text) <= DescriptionRoom)
+    {
+        return text;
+    }
+
+    while (!text.empty() && DescriptionWidth(text + "...") > DescriptionRoom)
+    {
+        text.pop_back();
+    }
+
+    return text + "...";
+}
+
+// The import under way on a thread of its own: each zip and disc image in turn, its progress and how it ended
+struct ImportState
+{
+    std::mutex lock;
+    std::atomic<bool> running{false};
+    std::atomic<bool> finished{false};
+    bool ok = true;
+    std::string source;
+    std::string failure;
+    double fraction = 0.0;
+};
+ImportState g_Import;
+
+void StartImport()
+{
+    if (g_Import.running)
+    {
+        return;
+    }
+
+    g_Import.running = true;
+    g_Import.finished = false;
+    g_Import.ok = true;
+    g_Import.failure.clear();
+    // (Left to end on its own: quitting during an import leaves its .importing- folder, removed by the next import)
+    std::thread([] {
+        for (const std::filesystem::path& source : Native::Mods::Importables())
+        {
+            {
+                std::lock_guard lock(g_Import.lock);
+                std::u8string name = source.filename().u8string();
+                g_Import.source = std::string(name.begin(), name.end());
+                g_Import.fraction = 0.0;
+            }
+
+            std::string error;
+            auto progress = [](const std::string&, double fraction) {
+                std::lock_guard lock(g_Import.lock);
+                g_Import.fraction = fraction;
+            };
+            if (!Native::Mods::Import(source, progress, &error))
+            {
+                std::lock_guard lock(g_Import.lock);
+                g_Import.ok = false;
+                g_Import.failure = g_Import.source + ": " + error;
+            }
+        }
+
+        g_Import.finished = true;
+        g_Import.running = false;
+    }).detach();
+}
+
+void OpenModsFolder()
+{
+    const std::filesystem::path folder = Native::Mods::Folder();
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    std::u8string path = folder.generic_u8string();
+    const std::string url = "file:///" + std::string(path.begin(), path.end());
+    Native::Log("mods: the mods folder opened");
+    SDL_OpenURL(url.c_str());
+}
+
+// The Mods page: import (while there's something to), each mod off or on in its place (the first wins: "on · 1"), the folder
+void BuildMods(std::vector<Row>& rows)
+{
+    Row import = Action(TextModsImport, TextDescModsImport, [] {
+        StartImport();
+        OpenDialog(DialogImporting);
+    });
+    // (Built again when an import ends: hidden then unless something's left to import, a failed one say)
+    const bool importable = !Native::Mods::Importables().empty();
+    import.shown = [importable] { return importable; };
+    rows.push_back(import);
+    for (const Native::Mods::Mod& mod : Native::Mods::List())
+    {
+        const std::string id = mod.id;
+        auto index = [id]() -> s32 {
+            const auto& list = Native::Mods::List();
+            for (size_t i = 0; i < list.size(); i++)
+            {
+                if (list[i].id == id)
+                {
+                    return static_cast<s32>(i);
+                }
+            }
+
+            return -1;
+        };
+        const s32 count = static_cast<s32>(Native::Mods::List().size());
+        Row row = Choice(
+            TextModsLoose, 0,
+            [index] {
+                const s32 at = index();
+                return at >= 0 && Native::Mods::List()[static_cast<size_t>(at)].on ? at + 1 : 0;
+            },
+            [index](s32 value) {
+                const s32 at = index();
+                if (at < 0)
+                {
+                    return;
+                }
+
+                Native::Mods::SetOn(static_cast<size_t>(at), value != 0);
+                if (value != 0)
+                {
+                    Native::Mods::MoveTo(static_cast<size_t>(at), static_cast<size_t>(value - 1));
+                }
+            },
+            count, [](s32 value) { return value == 0 ? Text(0) : Text(1) + " \xB7 " + std::to_string(value); });
+        if (!id.empty())
+        {
+            const std::string name = OverlayWords(mod.name.empty() ? id : mod.name);
+            row.labelText = [name] { return name; };
+        }
+
+        row.descriptionText = [index] {
+            const s32 at = index();
+            if (at < 0)
+            {
+                return std::string();
+            }
+
+            const Native::Mods::Mod& mod = Native::Mods::List()[static_cast<size_t>(at)];
+            if (!mod.refusal.empty())
+            {
+                return OneLine(Text(TextModRefused) + " " + OverlayWords(mod.refusal));
+            }
+
+            std::string info;
+            for (const std::string& part : {mod.author, mod.version})
+            {
+                info += part.empty() ? "" : (info.empty() ? "" : ", ") + OverlayWords(part);
+            }
+
+            info += mod.description.empty() ? "" : (info.empty() ? "" : ": ") + OverlayWords(mod.description);
+            const bool program = std::any_of(mod.warnings.begin(), mod.warnings.end(),
+                                             [](const std::string& warning) { return warning.find("SLES_525.68") != std::string::npos; });
+            if (program)
+            {
+                info = Text(TextModProgram) + (info.empty() ? "" : " " + info);
+            }
+
+            return OneLine(info.empty() ? Text(TextDescModsOpenFolder) : info);
+        };
+        rows.push_back(row);
+    }
+
+    rows.push_back(Action(TextModsOpenFolder, TextDescModsOpenFolder, OpenModsFolder));
 }
 
 void Build()
@@ -190,12 +419,66 @@ void Build()
             return pads != nullptr && pads->flags.vibration != 0 ? 1 : 0;
         },
         SetVibration, 1, [](s32 value) { return Text(value != 0 ? 1 : 0); }));
-    gameplay.push_back(OptionChoice(TextGameLanguage, TextDescGameLanguage, OptionLanguage,
-                                    {TextLanguageWindows, TextLanguageEnglish, TextLanguageFrench, TextLanguageGerman,
+    // The texts' language (and the voices', unless the next row chooses theirs: THE LIST 7). A slot whose texts are another
+    // language by their content (#25's Portuguese in the English slot: languages.cpp) is named by that language
+    gameplay.push_back(Choice(
+        TextGameLanguage, TextDescGameLanguage, [] { return GetOption(OptionLanguage); },
+        [](s32 value) { SetOption(OptionLanguage, value); }, 5, [](s32 value) {
+            constexpr u32 Names[] = {TextLanguageWindows, TextLanguageEnglish, TextLanguageFrench, TextLanguageGerman,
+                                     TextLanguageItalian, TextLanguageSpanish};
+            const char* content = TextBankLanguage(value);
+            if (content != nullptr && std::strcmp(content, "portuguese") == 0)
+            {
+                return Text(TextLanguagePortuguese);
+            }
+
+            if (content != nullptr && std::strcmp(content, "dutch") == 0)
+            {
+                return Text(TextLanguageDutch);
+            }
+
+            return Text(Names[std::clamp(value, 0, 5)]);
+        }));
+    gameplay.push_back(OptionChoice(TextSpeechLanguage, TextDescSpeechLanguage, OptionSpeechLanguage,
+                                    {TextLanguageAsTexts, TextLanguageEnglish, TextLanguageFrench, TextLanguageGerman,
                                      TextLanguageItalian, TextLanguageSpanish}));
     gameplay.push_back(Toggle(TextSkipCutscenes, TextDescSkip, OptionSkipCutscenes));
     gameplay.push_back(Toggle(TextFastLoading, TextDescFastLoading, OptionFastLoading));
     gameplay.push_back(Toggle(TextBugFixes, TextDescBugFixes, OptionRetailFixes));
+    // The game options (gameoptions.h), each off by default: infinite lives (THE LIST 6)
+    gameplay.push_back(Toggle(TextInfiniteLives, TextDescInfiniteLives, OptionInfiniteLives));
+    // The stronger Aku Aku mask (THE LIST 10, #30)
+    gameplay.push_back(Toggle(TextStrongMask, TextDescStrongMask, OptionStrongMask));
+    // The slide jump (THE LIST 11, #11, #35): original, any moment, easier
+    gameplay.push_back(OptionChoice(TextSlideJump, TextDescSlideJump, OptionSlideJump,
+                                    {TextDistanceOriginal, TextSlideJumpAnyMoment, TextSlideJumpEasier}));
+    // The drop shadow (THE LIST 14, #11, #35)
+    gameplay.push_back(Toggle(TextDropShadow, TextDescDropShadow, OptionDropShadow));
+    // The shadows on crates (THE LIST 38)
+    gameplay.push_back(Toggle(TextShadowsOnCrates, TextDescShadowsOnCrates, OptionShadowsOnCrates));
+    // The speedrun timer (THE LIST 13)
+    gameplay.push_back(Toggle(TextSpeedrunTimer, TextDescSpeedrunTimer, OptionSpeedrunTimer));
+    // The level select (THE LIST 12, levelselect.cpp): the option, then (on) the level chosen and its start from the main menu, or
+    // a line saying the main menu is where it starts from
+    gameplay.push_back(Toggle(TextLevelSelect, TextDescLevelSelect, OptionLevelSelect));
+    Row levelSelectLevel = Choice(
+        TextLevelSelectLevel, TextDescLevelSelectLevel, [] { return g_LevelSelectChoice; },
+        [](s32 value) { g_LevelSelectChoice = value; }, static_cast<s32>(LevelCount) - 1,
+        [](s32 value) { return Text(LevelNameTexts + static_cast<u32>(value)); });
+    levelSelectLevel.shown = [] { return IsOn(OptionLevelSelect); };
+    gameplay.push_back(levelSelectLevel);
+    Row levelSelectStart = Action(TextLevelSelectStart, TextDescLevelSelectLevel, [] {
+        if (CanStartLevel())
+        {
+            Close();
+            StartLevel(static_cast<u32>(g_LevelSelectChoice));
+        }
+    });
+    levelSelectStart.shown = [] { return CanStartLevel(); };
+    gameplay.push_back(levelSelectStart);
+    Row levelSelectElsewhere = Action(TextLevelSelectFromMainMenu, TextDescLevelSelectFromMainMenu, [] {});
+    levelSelectElsewhere.shown = [] { return IsOn(OptionLevelSelect) && !CanStartLevel(); };
+    gameplay.push_back(levelSelectElsewhere);
     gameplay.push_back(Toggle(TextPauseInactive, TextDescPauseInactive, OptionPauseOnFocusLoss));
     gameplay.push_back(Toggle(TextDetailedLog, TextDescDetailedLog, OptionDetailedLog));
     // Portable mode (portable.cpp; not an option of options.txt, which is in the folder it chooses): the mode in use, and stepping
@@ -205,6 +488,16 @@ void Build()
         [](s32 value) { return Text(value != 0 ? GameTextYes : GameTextNo); });
     portable.shown = [] { return Native::PortableSupported(); };
     gameplay.push_back(portable);
+    // The update check (off by default; Windows' only: updatecheck.h), and the newer release's page once one's found
+    Row updates = Toggle(TextUpdateCheck, TextDescUpdateCheck, OptionUpdateCheck);
+    updates.shown = [] { return Native::UpdateCheckSupported(); };
+    gameplay.push_back(updates);
+    Row page = Action(TextUpdatePage, TextDescUpdatePage, [] { Native::OpenNewerReleasePage(); });
+    page.shown = [] { return Native::NewerRelease(nullptr, nullptr); };
+    gameplay.push_back(page);
+    // The credits, and quitting to the desktop (#33: asked first, then as the window's close button)
+    gameplay.push_back(Action(TextCredits, TextDescCredits, [] { OpenDialog(DialogCredits); }));
+    gameplay.push_back(Action(TextQuitDesktop, TextDescQuitDesktop, [] { OpenDialog(DialogQuit); }));
 
     std::vector<Row>& display = g_Rows[TabDisplay];
     Row mode = Choice(
@@ -224,12 +517,13 @@ void Build()
     size.asksToKeep = true;
     size.shown = [] { return !CurrentResolution().fullscreen; };
     display.push_back(size);
+    // (Its choice applied once it settles, not at each step: THE LIST 41, PendingScale)
     display.push_back(Choice(
-        TextResolution, TextDescResolution, [] { return ScaleChoice(CurrentResolution()); },
+        TextResolution, TextDescResolution,
+        [] { return g_PendingScale >= 0 ? g_PendingScale : ScaleChoice(CurrentResolution()); },
         [](s32 value) {
-            Resolution resolution = CurrentResolution();
-            resolution.scale = Scales[value];
-            SetResolution(resolution);
+            g_PendingScale = value;
+            g_PendingAt = std::chrono::steady_clock::now();
         },
         ScaleChoices - 1, [](s32 value) {
             // The scale and the picture's size it draws at (the PAL frame's 640 x 512 times it): "2×  ·  1280 × 1024"
@@ -238,15 +532,17 @@ void Build()
                    std::to_string(512 * scale);
         }));
     display.push_back(Choice(
-        // The TV's shape: 4:3, 16:9 (the game's widescreen) or 21:9 (the game's widescreen made wider, fixes.cpp's Ultrawide)
+        // The TV's shape: 4:3, 16:9 (the game's widescreen), 21:9 or 32:9 (the game's widescreen made wider, fixes.cpp's
+        // Ultrawide and SuperUltrawide)
         GameTextWidescreen, TextDescWidescreen,
-        [] { return g_WidescreenTv == 0 ? 0 : IsOn(OptionUltrawide) ? 2 : 1; },
+        [] { return g_WidescreenTv == 0 ? 0 : IsOn(OptionSuperUltrawide) ? 3 : IsOn(OptionUltrawide) ? 2 : 1; },
         [](s32 value) {
             g_WidescreenTv = static_cast<u8>(value != 0 ? 1 : 0);
             SetOption(OptionWidescreen, value != 0 ? 1 : 0);
             SetOption(OptionUltrawide, value == 2 ? 1 : 0);
+            SetOption(OptionSuperUltrawide, value == 3 ? 1 : 0);
         },
-        2, [](s32 value) { return std::string(value == 0 ? "4:3" : value == 1 ? "16:9" : "21:9"); }));
+        3, [](s32 value) { return std::string(value == 0 ? "4:3" : value == 1 ? "16:9" : value == 2 ? "21:9" : "32:9"); }));
     display.push_back(OptionChoice(TextRefreshRate, TextDescRefreshRate, OptionRefresh60,
                                    {Text50Hz, Text60Hz, Text120Hz, Text144Hz, TextUnlimited}));
     display.push_back(OptionChoice(TextFiltering, TextDescFiltering, OptionTextureFilter, {TextSharp, TextSmooth}));
@@ -255,8 +551,20 @@ void Build()
     // (The texture upscale isn't shown until the graphics have it: NativeGraphicsSetTextureUpscale takes only off.) The
     // anti-aliasing is FXAA on the shown picture, or supersampling (the render scale 2 or 4 times the resolution's, up to 8x
     // the PS2's, the picture made smaller as it's shown); there's no MSAA: PCSX2 dropped its own
-    display.push_back(
-        OptionChoice(TextAntiAliasing, TextDescAntiAliasing, OptionAntiAliasing, {0, TextFxaa, TextSsaa2, TextSsaa4}));
+    display.push_back(Choice(
+        TextAntiAliasing, TextDescAntiAliasing,
+        [] {
+            const s32 value = GetOption(OptionAntiAliasing);
+            const auto* at = std::find(std::begin(AntiAliasingOrder), std::end(AntiAliasingOrder), value);
+            return at != std::end(AntiAliasingOrder) ? static_cast<s32>(at - std::begin(AntiAliasingOrder)) : 0;
+        },
+        [](s32 value) { SetOption(OptionAntiAliasing, AntiAliasingOrder[value]); }, AntiAliasingChoices - 1,
+        [](s32 value) { return Text(AntiAliasingTexts[value]); }));
+    // Anisotropic filtering (THE LIST 9: off by default, the PS2's sampling)
+    display.push_back(Choice(
+        TextAnisotropic, TextDescAnisotropic, [] { return GetOption(OptionAnisotropy); },
+        [](s32 value) { SetOption(OptionAnisotropy, value); }, 4,
+        [](s32 value) { return value == 0 ? Text(0) : std::to_string(1 << value) + "x"; }));
     display.push_back(OptionChoice(TextDithering, TextDescDithering, OptionDithering, {TextDitherPs2, 0}));
     display.push_back(Choice(
         TextRenderDistance, TextDescRenderDistance,
@@ -334,11 +642,13 @@ void Build()
 
     for (u32 tab = 0; tab < TabCount; tab++)
     {
-        if (tab != TabControls)
+        if (tab != TabControls && tab != TabMods)
         {
             g_Rows[tab].push_back(Action(TextResetDefaults, TextDescResetDefaults, nullptr));
         }
     }
+
+    BuildMods(g_Rows[TabMods]);
 }
 
 bool Shown(const Row& row)
@@ -723,6 +1033,8 @@ void ResetTab(u32 tab)
         g_WidescreenTv = static_cast<u8>(DefaultOption(OptionWidescreen) != 0 ? 1 : 0);
         ResetOptions({OptionWidescreen, OptionUltrawide, OptionRefresh60, OptionTextureFilter, OptionCrtFilter, OptionTexturePack,
                       OptionTextureUpscale, OptionAntiAliasing, OptionVSync, OptionRenderDistance});
+        ResetOptions({OptionAnisotropy});
+        ResetOptions({OptionSuperUltrawide});
         break;
     case TabAudio:
         SetMusic(DefaultOption(OptionMusicVolume));
@@ -734,6 +1046,15 @@ void ResetTab(u32 tab)
         SetVibration(DefaultOption(OptionVibration));
         ResetOptions({OptionLanguage, OptionSkipCutscenes, OptionFastLoading, OptionRetailFixes, OptionPauseOnFocusLoss,
                       OptionDetailedLog});
+        ResetOptions({OptionSpeechLanguage});
+        ResetOptions({OptionUpdateCheck});
+        ResetOptions({OptionInfiniteLives});
+        ResetOptions({OptionStrongMask});
+        ResetOptions({OptionSlideJump});
+        ResetOptions({OptionDropShadow});
+        ResetOptions({OptionShadowsOnCrates});
+        ResetOptions({OptionSpeedrunTimer});
+        ResetOptions({OptionLevelSelect});
         break;
     case TabAccessibility:
         ResetOptions({OptionCameraShake, OptionInvertCameraX, OptionInvertCameraY, OptionCameraSpeed, OptionStickDeadZone});
@@ -830,13 +1151,25 @@ void MoveRow(s32 by)
         return;
     }
 
-    s32 at = 0;
+    // From the selected row's line; a hidden one's (the Mods page's import, once done) is between the lines round it, so the next
+    // step lands on the line after it (or before), not one further
+    s32 before = 0;
+    s32 at = -1;
     for (s32 i = 0; i < static_cast<s32>(visible.size()); i++)
     {
         if (visible[static_cast<size_t>(i)] == g_Row)
         {
             at = i;
         }
+        else if (visible[static_cast<size_t>(i)] < g_Row)
+        {
+            before++;
+        }
+    }
+
+    if (at < 0)
+    {
+        at = by > 0 ? before - 1 : before;
     }
 
     // Wrapping round at the ends
@@ -847,6 +1180,22 @@ void MoveRow(s32 by)
         {
             g_Row = visible[static_cast<size_t>(at)];
             return;
+        }
+    }
+}
+
+// The Mods page's rows made again from the list (an import ended); the selection on the page's first mod if it was on the import
+void RebuildMods()
+{
+    std::vector<Row>& rows = g_Rows[TabMods];
+    rows.clear();
+    BuildMods(rows);
+    if (g_Tab == TabMods)
+    {
+        g_Row = std::min(g_Row, static_cast<s32>(rows.size()) - 1);
+        if (!Selectable(rows[static_cast<size_t>(g_Row)]))
+        {
+            MoveRow(1);
         }
     }
 }
@@ -871,6 +1220,7 @@ void SelectTab(u32 tab)
 
 void Close()
 {
+    ApplyPendingResolution();
     if (g_Keeping)
     {
         EndKeeping(false);
@@ -1001,6 +1351,12 @@ Hit HitTest()
         hit.region = &region;
     }
 
+    // (The regions are last frame's: the Mods page's rows may have been made again since, fewer)
+    if (hit.row >= static_cast<s32>(g_Rows[g_Tab].size()))
+    {
+        hit.row = -1;
+    }
+
     return hit;
 }
 
@@ -1038,13 +1394,22 @@ void AskPortable(bool portable)
     }
 }
 
+// The quit's question (no chosen first) or the credits
+void OpenDialog(PortableDialog dialog)
+{
+    g_Dialog = dialog;
+    g_DialogOnYes = false;
+}
+
 // The dialog's input and the copy followed. Asked: left and right (or the mouse over a button) choose yes or no, select takes the
 // chosen one, back is no, a click takes its button; yes copies. Refused and failed go away on select or back; done closes the
-// game on either, or by itself after a few seconds (the old folder gets nothing more either way)
+// game on either, or by itself after a few seconds (the old folder gets nothing more either way). The quit's question as asked
+// (yes closes the game as the window's close button does: the saves and settings are written as they're made); the credits go
+// away on select or back
 void TakeDialogInput()
 {
     Hit hit = HitTest();
-    bool asked = g_Dialog == DialogAsk;
+    bool asked = g_Dialog == DialogAsk || g_Dialog == DialogQuit;
     if (asked && hit.region != nullptr && (g_MouseMoved || g_MouseClicked) &&
         (hit.region->kind == HitKind::DialogYes || hit.region->kind == HitKind::DialogNo))
     {
@@ -1097,8 +1462,38 @@ void TakeDialogInput()
         }
 
         break;
+    case DialogQuit:
+        if (yes)
+        {
+            LogSettingChanges();
+            Native::EndSession("quit: to the desktop from the options");
+            std::_Exit(0);
+        }
+        else if (no)
+        {
+            g_Dialog = DialogNone;
+        }
+
+        break;
+    case DialogImporting:
+        if (g_Import.finished)
+        {
+            {
+                std::lock_guard lock(g_Import.lock);
+                g_Dialog = g_Import.ok ? DialogImported : DialogImportFailed;
+            }
+
+            // The imported mods on the page at once (used from the next start)
+            Native::Mods::Refresh();
+            RebuildMods();
+        }
+
+        break;
     case DialogRefused:
     case DialogFailed:
+    case DialogCredits:
+    case DialogImported:
+    case DialogImportFailed:
         if (yes || no)
         {
             g_Dialog = DialogNone;
@@ -1358,7 +1753,15 @@ SettingsView CurrentSettingsView()
     view.dialog = g_Dialog;
     view.dialogPortable = g_DialogPortable;
     view.dialogOnYes = g_DialogOnYes;
-    if (g_Dialog != DialogNone)
+    if (g_Dialog == DialogImporting || g_Dialog == DialogImported || g_Dialog == DialogImportFailed)
+    {
+        std::lock_guard lock(g_Import.lock);
+        view.copied = static_cast<u64>(g_Import.fraction * 1000.0);
+        view.copyTotal = 1000;
+        view.backup = OverlayWords(g_Import.source);
+        view.failure = g_Import.failure;
+    }
+    else if (g_Dialog != DialogNone)
     {
         Native::PortableSwitchState(&view.copied, &view.copyTotal, &view.backup, &view.failure);
     }
@@ -1370,6 +1773,7 @@ SettingsView CurrentSettingsView()
 
 const std::vector<Row>& SettingsRows(u32 page)
 {
+    Build();
     return g_Rows[page];
 }
 
@@ -1484,6 +1888,17 @@ void SettingsFrame()
     }
 
     TakeInput();
+    // The resolution stepped to: applied once the row's left or the steps stop (THE LIST 41)
+    if (g_PendingScale >= 0)
+    {
+        const std::vector<Row>& rows = g_Rows[g_Tab];
+        const bool onRow = g_Open && g_Row >= 0 && static_cast<size_t>(g_Row) < rows.size() && rows[g_Row].label == TextResolution;
+        const f32 since = std::chrono::duration<f32>(std::chrono::steady_clock::now() - g_PendingAt).count();
+        if (!onRow || since >= PendingSeconds)
+        {
+            ApplyPendingResolution();
+        }
+    }
 }
 
 namespace
@@ -1496,8 +1911,10 @@ std::vector<HitRegion> g_MenuRegions;
 
 // The draw phase's part, after OLEG's widgets: the overlay's frame recorded (the settings screen, its regions kept for the next
 // frame's input; or the game's menus' bar of prompts) with the cursor over what can be clicked, and handed to the presenter
-void DrawAfterOleg(Renderer*)
+void DrawAfterOleg(Renderer* renderer)
 {
+    // The speedrun timer (the game option) in the game's own font
+    SpeedrunDraw(renderer);
     OverlayFrame& frame = RecordingFrame();
     frame.Clear();
     f32 mouseX = -1.0f;

@@ -1,6 +1,7 @@
 // The native build's optional bug fixes: whether they're on, and the ones made on the data the game reads from the disc
 #include "fixes.h"
 
+#include "gameoptions.h"
 #include "native.h"
 #include "ui/nativeui.h"
 
@@ -72,7 +73,12 @@ bool RetailFixes()
 
 bool Ultrawide()
 {
-    return g_WidescreenTv != 0 && NativeUi::IsOn(NativeUi::OptionUltrawide);
+    return g_WidescreenTv != 0 && NativeUi::IsOn(NativeUi::OptionUltrawide) && !NativeUi::IsOn(NativeUi::OptionSuperUltrawide);
+}
+
+bool SuperUltrawide()
+{
+    return g_WidescreenTv != 0 && NativeUi::IsOn(NativeUi::OptionSuperUltrawide);
 }
 
 f32 WideTvAspect()
@@ -80,7 +86,9 @@ f32 WideTvAspect()
     // TechieSaru's 21:9 fix (Crash-Twinsanity-Improved's "PCSX2 patches", [Widescreen 21:9 Ultrawide]) writes 0x4015 and 0x5554
     // over the halves of 16:9's 0x3FE38E39 where the renderer loads it (0x19BB48, 0x1A074C, 0x1A07DC, 0x1A0DA0)
     constexpr f32 UltrawideAspect = 0x1.2AAAA8p+1f;
-    return Ultrawide() ? UltrawideAspect : WideAspect;
+    // 32:9 the same way, the game's projection and 2D squeeze (renderer.cpp's ScreenSqueeze) taking the shape
+    constexpr f32 SuperUltrawideAspect = 32.0f / 9.0f;
+    return SuperUltrawide() ? SuperUltrawideAspect : Ultrawide() ? UltrawideAspect : WideAspect;
 }
 
 bool SkipCutscenes()
@@ -100,7 +108,8 @@ void MaterialRead(u8* data, u32 size)
     constexpr u32 SettingsBytes = 30;
     constexpr u32 ShadowReceiverSetting = 24;
     constexpr u32 AfterSettings = 4 + 16 + 16 + 16 + 4 + 4;
-    if (!RetailFixes() || size < 16)
+    // (The bug fixes' change, and the shadows on crates game option's: THE LIST 38, from a level's next load)
+    if ((!RetailFixes() && !NativeGame::ShadowsOnCrates()) || size < 16)
     {
         return;
     }
@@ -158,6 +167,13 @@ void MaterialRead(u8* data, u32 size)
         if (shader[0] == 0 && shader[ShadowReceiverSetting] == 0)
         {
             shader[ShadowReceiverSetting] = 1;
+            // ($TWIN_FIXES_TRACE: each crate material made a shadow receiver said, its option's check)
+            static const bool tracing = std::getenv("TWIN_FIXES_TRACE") != nullptr;
+            if (tracing)
+            {
+                Native::Log("fixes: a crate material's shader made a shadow receiver (%.*s)", static_cast<int>(nameLength),
+                            reinterpret_cast<const char*>(data + 16));
+            }
         }
     }
 }

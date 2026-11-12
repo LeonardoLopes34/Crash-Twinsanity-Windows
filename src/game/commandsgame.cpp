@@ -20,6 +20,9 @@
 
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
+#include "cutsceneskip.h"
+#include "gameoptions.h"
+#include "native.h"
 #endif
 
 // The commands that ask the game's controllers: the game controller's requests, the video controller, the music, the player, the
@@ -107,9 +110,26 @@ void UnlinkCharactersCommand::Execute(TimeClock*, BehaviourRunner* runner, Behav
 }
 
 // The watching screen shown over half the seconds given (and hidden the same way)
-void CutsceneStartCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
+void CutsceneStartCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLevel*)
 {
+#ifdef TWIN_NATIVE
+    // The cutscene skip (THE LIST 28, cutsceneskip.h): the runner's agent is the cutscene's director, and the graphs it runs say
+    // whether the cutscene may be skipped
+    u32 state = G_GameController->State();
+    if (state == GameController::StatePlaying)
+    {
+        ForgetCutsceneAgents();
+    }
+
     G_GameController->StartCutscene(static_cast<s32>(seconds * 0.5f * g_ClockUnitsPerSecond));
+    if (state == GameController::StatePlaying || state == GameController::StateWatching)
+    {
+        NoteCutsceneDirector(runner->agentNode->owner);
+        NoteCutsceneSite(runner);
+    }
+#else
+    G_GameController->StartCutscene(static_cast<s32>(seconds * 0.5f * g_ClockUnitsPerSecond));
+#endif
 }
 
 void CutsceneEndCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
@@ -206,6 +226,13 @@ void QueueObjectVideoCommand::Execute(TimeClock*, BehaviourRunner* runner, Behav
 
 void QueueVideoCommand::Execute(TimeClock* clock, BehaviourRunner* runner, BehaviourLevel*)
 {
+#ifdef TWIN_NATIVE
+    // A skipped cutscene's speech track isn't queued (cutsceneskip.h; CutsceneMusicReady answers ready)
+    if (CutsceneSkips(runner->agentNode) != 0)
+    {
+        return;
+    }
+#endif
     s32 trackNumber = track.IntWith(static_cast<ObjectNode*>(runner->agentNode)->PacketProperties());
     QueueMovie(G_VideoController, trackNumber, clock, flags.loops);
 }
@@ -282,6 +309,16 @@ void AddLivesCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLeve
     GameController* controller = G_GameController;
     InstanceContext* owner = runner->agentNode->owner;
     InstanceContext* played = controller->progress.Instance(controller->progress.play.character);
+#ifdef TWIN_NATIVE
+    // Infinite lives (the game option, THE LIST 6): the played character's death costs none; the lives panel shows as on any
+    // death, its count as it was
+    if (lives < 0 && owner == played && NativeGame::InfiniteLives())
+    {
+        Native::Log("infinite lives: a death that cost no life (still %u)", controller->progress.counts.lives);
+        controller->oleg.AddLives(0, 0);
+        return;
+    }
+#endif
     if (lives > 0 || owner == played)
     {
         controller->oleg.AddLives(lives, 0);

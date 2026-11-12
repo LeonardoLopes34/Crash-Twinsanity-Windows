@@ -17,7 +17,8 @@ its own, and whatever the run put into PCSX2's config goes again afterwards.
 --start-chunk starts in that chunk (Levels\\Earth\\DocAmok\\docamok3) as a new game from the logos, as the port's $TWIN_START_CHUNK
 does: the path written below the executable (0xFF000), the progress's start chunk made it, the next state the level's loading.
 --write writes words (hex, or floats with an f: -9f) at the symbol's address and its hops (each >offset follows the pointer
-found), WHEN seconds after the start or, pN, N seconds after the game first plays; --dump-ram keeps the EE's 32 MB in a file then.
+found), WHEN seconds after the start or, pN, N seconds after the game first plays; --dump-ram keeps the EE's 32 MB in a file then
+(the run stays on past the game's first play until the last of them, and of --screenshot's and --gsdump's, is done).
 
 --watch prints a word of the map's symbol whenever it changes (a breadcrumb the code under test writes, say; every >offset
 follows the pointer found so far: G_GameReadersStorages>0x18>0x4 is storage 0's current reader's vtable). --snapshot T saves
@@ -688,6 +689,13 @@ def main():
     os.makedirs(os.path.dirname(settings), exist_ok=True)
     cards = f"{CONFIG}/memcards"
     os.makedirs(cards, exist_ok=True)
+    # A run's card left by a run with --stay (PCSX2 kept it open, so it couldn't go when that run ended): gone now, so this run
+    # never plays on its saves; still in use, that PCSX2 is still open
+    if os.path.exists(f"{cards}/{RUN_CARD}"):
+        try:
+            os.remove(f"{cards}/{RUN_CARD}")
+        except PermissionError:
+            raise SystemExit(f"{RUN_CARD} is in use: the PCSX2 a run with --stay left open is still running, close it first")
     user_cards = {name: os.path.getmtime(f"{cards}/{name}") for name in os.listdir(cards) if name != RUN_CARD}
     if args.card and os.path.realpath(os.path.dirname(os.path.abspath(args.card))) == os.path.realpath(cards):
         raise SystemExit("--card has to be a copy outside PCSX2's memory card folder")
@@ -1010,7 +1018,8 @@ def main():
                     pine.write32(controller + 0x14, 0)
 
                 playing_since = playing_since or time.time()
-                if time.time() - playing_since > 3:
+                # (on while a --write, a --dump-ram, a screenshot or a GS dump after the first play is still to come)
+                if time.time() - playing_since > 3 and not writes and not ram_dumps and not screenshots and not gsdumps:
                     manager = pine.read32(symbols["G_ChunkManager"])
                     count = pine.read32(manager) & 0xFFFF
                     chunks = [pine.string(pine.read32(manager + 4 + 4 * i)) for i in range(min(count, 8))]
@@ -1065,7 +1074,11 @@ def main():
         if os.path.exists(f"{cards}/{RUN_CARD}"):
             if args.card:
                 shutil.copy2(f"{cards}/{RUN_CARD}", args.card)
-            os.remove(f"{cards}/{RUN_CARD}")
+            if args.stay and result == "PLAYING":
+                # PCSX2 still has it open (Windows can't delete it): the next run removes it
+                print(f"{RUN_CARD} stays while PCSX2 is open; the next run removes it", flush=True)
+            else:
+                os.remove(f"{cards}/{RUN_CARD}")
 
         for name, mtime in user_cards.items():
             if os.path.getmtime(f"{cards}/{name}") != mtime:

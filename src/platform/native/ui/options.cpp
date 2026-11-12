@@ -51,7 +51,7 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionMouse, "mouse", 1, 1},
     {OptionTextureUpscale, "texture_upscale", 0, 2},
     {OptionTexturePack, "texture_pack", 1, 1},
-    {OptionAntiAliasing, "anti_aliasing", 0, 3},
+    {OptionAntiAliasing, "anti_aliasing", 0, 4},
     {OptionVSync, "vsync", 1, 1},
     {OptionMusicVolume, "music_volume", 10, 10},
     {OptionEffectsVolume, "effects_volume", 10, 10},
@@ -75,6 +75,17 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionShowFps, "show_fps", 0, 1},
     {OptionDithering, "dithering", 0, 1},
     {OptionRenderDistance, "render_distance", 0, 4},
+    {OptionSpeechLanguage, "speech_language", 0, 5},
+    {OptionAnisotropy, "anisotropic_filtering", 0, 4},
+    {OptionSuperUltrawide, "super_ultrawide", 0, 1},
+    {OptionUpdateCheck, "update_check", 0, 1},
+    {OptionInfiniteLives, "infinite_lives", 0, 1},
+    {OptionStrongMask, "strong_mask", 0, 1},
+    {OptionSlideJump, "slide_jump", 0, 2},
+    {OptionLevelSelect, "level_select", 0, 1},
+    {OptionSpeedrunTimer, "speedrun_timer", 0, 1},
+    {OptionDropShadow, "drop_shadow", 0, 1},
+    {OptionShadowsOnCrates, "shadows_on_crates", 0, 1},
 };
 
 s32 g_Values[OptionCount];
@@ -146,7 +157,10 @@ const char* ValueMeaning(const OptionInfo& info, s32 value)
     static constexpr const char* Languages[] = {"Windows'", "English", "French", "German", "Italian", "Spanish"};
     static constexpr const char* Filters[] = {"sharp", "smooth"};
     static constexpr const char* Hints[] = {"original", "bar"};
-    static constexpr const char* AntiAliasing[] = {"off", "FXAA", "SSAA 2x", "SSAA 4x"};
+    static constexpr const char* AntiAliasing[] = {"off", "FXAA", "SSAA 2x", "SSAA 4x", "SMAA"};
+    static constexpr const char* Speech[] = {"as the texts", "English", "French", "German", "Italian", "Spanish"};
+    static constexpr const char* Anisotropy[] = {"off", "2x", "4x", "8x", "16x"};
+    static constexpr const char* SlideJumps[] = {"original", "any moment", "easier"};
     static constexpr const char* Layouts[] = {"by the places", "Nintendo's"};
     static constexpr const char* Dithering[] = {"as the PS2", "off"};
     static constexpr const char* Distances[] = {"original", "short", "medium", "long", "unlimited"};
@@ -173,6 +187,12 @@ const char* ValueMeaning(const OptionInfo& info, s32 value)
         return pick(Dithering);
     case OptionRenderDistance:
         return pick(Distances);
+    case OptionSpeechLanguage:
+        return pick(Speech);
+    case OptionAnisotropy:
+        return pick(Anisotropy);
+    case OptionSlideJump:
+        return pick(SlideJumps);
     default:
         return info.maximum == 1 ? pick(Toggle) : nullptr;
     }
@@ -458,6 +478,8 @@ void Frame()
     PhysicsTestFrame();
     SettingsShotsFrame();
     PortableTestFrame();
+    LevelSelectFrame();
+    SpeedrunFrame();
     MouseFrame();
     ApplyGameSettingsOnce();
     SettingsFrame();

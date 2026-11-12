@@ -6,12 +6,17 @@
 // skipping the cutscenes ("hold any button to skip": cross is held 1 s each cycle)
 #include "ui/bindings.h"
 
+#include "cutsceneskip.h"
 #include "native.h"
 
 #include "game/agentlab.h"
 #include "game/agents.h"
 #include "game/behaviours.h"
 #include "game/chunkdata.h"
+#include "game/clock.h"
+#include "game/commands.h"
+#include "game/events.h"
+#include "game/memory.h"
 #include "game/gamecontroller.h"
 #include "game/instances.h"
 #include "game/objectnode.h"
@@ -21,6 +26,7 @@
 #include "game/reference.h"
 #include "game/string.h"
 #include "graphics/presenter.h"
+#include "platform/time.h"
 
 #include <chrono>
 #include <cmath>
@@ -38,7 +44,28 @@ namespace NativeUi
 {
 namespace
 {
-using Clock = std::chrono::steady_clock;
+// The sweep's clock: real time, or with $TWIN_SWEEP_GAME_TIME the game clock's ticks (with $TWIN_FIXED_TIME a frame's worth each
+// frame), so a run's hops and waits come at the same frames every run and two runs' pictures can be compared frame by frame
+struct Clock
+{
+    using duration = std::chrono::steady_clock::duration;
+    using rep = duration::rep;
+    using period = duration::period;
+    using time_point = std::chrono::time_point<Clock>;
+    static constexpr bool is_steady = true;
+
+    static time_point now()
+    {
+        static const bool gameTime = std::getenv("TWIN_SWEEP_GAME_TIME") != nullptr;
+        if (gameTime)
+        {
+            return time_point(std::chrono::duration_cast<duration>(
+                std::chrono::duration<double>(static_cast<double>(GameClockTicks()) / Platform::Time::TicksPerSecond)));
+        }
+
+        return time_point(std::chrono::steady_clock::now().time_since_epoch());
+    }
+};
 
 bool g_Read = false;
 std::string g_Level;
@@ -405,8 +432,21 @@ void HopFrame()
             const char* linked = link->linkedData != nullptr && link->linkedData->name.string != nullptr
                                      ? link->linkedData->name.string
                                      : "?";
-            Native::Log("hop:   linked to %s%s%s", linked, link->loadWall != nullptr ? "" : " (no wall)",
-                        link->flags.linkedRm2Loaded != 0 ? "" : " (not loaded)");
+            // (the load wall's middle: where a fly step goes through the link as a player walking would)
+            Vector4 middle = {0.0f, 0.0f, 0.0f, 1.0f};
+            if (link->loadWall != nullptr)
+            {
+                for (const Vector4& corner : link->loadWall->corners)
+                {
+                    middle.x += corner.x * 0.25f;
+                    middle.y += corner.y * 0.25f;
+                    middle.z += corner.z * 0.25f;
+                }
+            }
+
+            Native::Log("hop:   linked to %s%s%s, its wall's middle at (%.1f, %.1f, %.1f)", linked,
+                        link->loadWall != nullptr ? "" : " (no wall)", link->flags.linkedRm2Loaded != 0 ? "" : " (not loaded)",
+                        middle.x, middle.y, middle.z);
         }
 
         lastChunk = name;
@@ -549,6 +589,43 @@ void HopFrame()
         Native::Log("hop: the instances in %s", name.c_str());
         InstanceSearch search = {chunk, player, "", {}, nullptr, 0.0f};
         ForEachLiveInstance(VisitInstance, &search);
+        next++;
+        lastHop = now;
+        return;
+    }
+
+    // "tell:NAME" (or "tell:NAME:MESSAGE"): user message MESSAGE (87) sent to the instances of the player's chunk whose object's
+    // name holds NAME, from none, as a trigger tells it (a scene's director started where its trigger is out of a test's reach:
+    // TwinsanityEvolved's tests start them so, native/tools/check_cutscene_skips.py)
+    if (targets[next].rfind("tell:", 0) == 0)
+    {
+        std::string wanted = targets[next].substr(5);
+        u32 message = 87;
+        size_t colon = wanted.find(':');
+        if (colon != std::string::npos)
+        {
+            message = static_cast<u32>(std::atoi(wanted.c_str() + colon + 1));
+            wanted.resize(colon);
+        }
+
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return std::tolower(c); });
+        InstanceList list = {chunk, wanted, {}};
+        ForEachLiveInstance(ListInstance, &list);
+        for (InstanceContext* instance : list.found)
+        {
+            Reference* argument = nullptr;
+            auto* event = GameEvent::Construct(static_cast<GameEvent*>(MemoryAllocate(sizeof(GameEvent))), message, &argument,
+                                               ObjectNodeKinds);
+            Reference* handle = AddEventReference(event);
+            QueueEvent(instance, &handle);
+            Native::Log("hop: message %u sent to %s in %s", message, ObjectNameOf(instance), name.c_str());
+        }
+
+        if (list.found.empty())
+        {
+            Native::Log("hop: no instance of an object named like %s in %s", wanted.c_str(), name.c_str());
+        }
+
         next++;
         lastHop = now;
         return;
@@ -702,6 +779,34 @@ void HopFrame()
 
         next++;
         lastHop = now + std::chrono::seconds(8);
+        return;
+    }
+
+    // "load:Levels\AltEarth\Core\corea": that chunk loaded as $TWIN_START_CHUNK loads one (the game's saved-level path), the
+    // chunks played before it staying the renderer's history (THE LIST 16: Ant Agony after bossarea's sky)
+    if (targets[next].rfind("load:", 0) == 0)
+    {
+        GameController* controller = G_GameController;
+        const std::string chunkName = targets[next].substr(5);
+        StringAssign(&controller->progress.startChunk, chunkName.c_str());
+        controller->states.entry = EntrySaved;
+        controller->saveController.Take(&controller->progress, controller->chunkManager, nullptr);
+        controller->SetNextState(GameController::StateLoadingLevel);
+        Native::Log("hop: loading %s from %s", chunkName.c_str(), name.c_str());
+        next++;
+        lastHop = now + std::chrono::seconds(2);
+        return;
+    }
+
+    // "mask": a mask picked up as an Aku Aku crate gives it (a hit point; the fourth makes the player invincible: THE LIST 15's
+    // trails, $TWIN_MASK_TRACE)
+    if (targets[next] == "mask")
+    {
+        alignas(PickUpHealthCommand) unsigned char command[sizeof(PickUpHealthCommand)] = {};
+        reinterpret_cast<PickUpHealthCommand*>(command)->ExecuteOn(nullptr);
+        Native::Log("hop: a mask picked up in %s", name.c_str());
+        next++;
+        lastHop = now - std::chrono::seconds(2);
         return;
     }
 
@@ -868,13 +973,14 @@ void LogSceneInstance(InstanceContext* instance, void*)
 
 void SceneStateFrame()
 {
-    // $TWIN_SCENE_STATE=SECONDS: that long into the play after it (1.5 s by default)
+    // $TWIN_SCENE_STATE=SECONDS: that long into the play after it (1.5 s by default), counted in game frames (60 a second), so
+    // two runs with $TWIN_FIXED_TIME take it at the same frame (native/tools/check_cutscene_skips.py)
     static const char* setting = std::getenv("TWIN_SCENE_STATE");
     static const bool wanted = setting != nullptr;
     static const f32 after = setting != nullptr && std::atof(setting) > 0.0 ? static_cast<f32>(std::atof(setting)) : 1.5f;
     static bool inScene = false;
     static bool pending = false;
-    static Clock::time_point ended;
+    static u32 frames = 0;
     GameController* controller = G_GameController;
     if (!wanted || controller == nullptr)
     {
@@ -882,7 +988,6 @@ void SceneStateFrame()
     }
 
     u32 state = controller->State();
-    Clock::time_point now = Clock::now();
     if (state == GameController::StateWatching)
     {
         inScene = true;
@@ -894,17 +999,23 @@ void SceneStateFrame()
     {
         inScene = false;
         pending = true;
-        ended = now;
+        frames = 0;
     }
 
+    // Twice, a second apart: what changes between the two goes on by itself (an idle loop, a patrol), what doesn't is what the
+    // scene left
+    static u32 taken = 0;
+    taken = frames == 0 ? 0 : taken;
     InstanceContext* player = ScenePlayer();
-    if (!pending || state != GameController::StatePlaying || std::chrono::duration<f32>(now - ended).count() < after ||
+    frames += pending && state == GameController::StatePlaying ? 1 : 0;
+    if (!pending || state != GameController::StatePlaying || static_cast<f32>(frames) < (after + static_cast<f32>(taken)) * 60.0f ||
         player == nullptr)
     {
         return;
     }
 
-    pending = false;
+    taken++;
+    pending = taken < 2;
     CharacterAgent* agent = ScenePlayerAgent();
     ObjectPlace* place = player->place;
     place->SyncPosition();
@@ -917,6 +1028,26 @@ void SceneStateFrame()
                 agent != nullptr ? agent->buttons.locked.value : 0u, place->position.x, place->position.y, place->position.z,
                 runners.c_str());
     ForEachLiveInstance(LogSceneInstance, nullptr);
+    // The last cutscene's agents (cutsceneskip.cpp's), where they are and what they run (the skip's check: watched and skipped
+    // compared, native/tools/check_cutscene_skips.py)
+    const InstanceContext* agents[128];
+    u32 count = LastCutsceneAgents(agents, 128);
+    for (u32 index = 0; index < count; index++)
+    {
+        auto* agent = const_cast<InstanceContext*>(agents[index]);
+        if (agent == player || agent->place == nullptr)
+        {
+            continue;
+        }
+
+        ObjectPlace* at = agent->place;
+        at->SyncPosition();
+        bool runsScene = false;
+        std::string agentRunners = RunnersOf(agent, &runsScene);
+        Native::Log("scene state: agent %s at (%.2f, %.2f, %.2f), visible %u:%s", OwnNameOf(agent).c_str(), at->position.x,
+                    at->position.y, at->position.z, static_cast<u32>(agent->flags.visible), agentRunners.c_str());
+    }
+
     Native::Log("scene state: end");
 }
 

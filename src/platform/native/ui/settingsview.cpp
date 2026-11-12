@@ -8,6 +8,7 @@
 #include "ui/overlay.h"
 
 #include "native.h"
+#include "updatecheck.h"
 #include "graphics/presenter.h"
 
 #include "game/gamecontroller.h"
@@ -78,6 +79,11 @@ std::string ProperWords(const std::string& text)
         {"v-sync", "V-sync"},   {"esc", "Esc"},         {"fxaa", "FXAA"},   {"msaa", "MSAA"},         {"smaa", "SMAA"},
         {"crash", "Crash"},     {"cortex", "Cortex"},   {"nina", "Nina"},   {"wumpa", "Wumpa"},       {"tv", "TV"},
         {"hud", "HUD"},         {"ui", "UI"},           {"pc", "PC"},       {"fps", "FPS"},
+        // The credits' names
+        {"windows", "Windows"}, {"linux", "Linux"},     {"mac", "Mac"},     {"hd", "HD"},
+        {"twinsanity improved", "Twinsanity Improved"}, {"twinsanityevolved", "TwinsanityEvolved"}, {"github", "GitHub"},
+        // The game options' names
+        {"aku aku", "Aku Aku"}, {"tnt", "TNT"}, {"nitro", "Nitro"},
         // Portable mode's: the folders' names, the stick, the dialog's button
         {"appdata", "AppData"}, {"user", "User"},       {"usb", "USB"},     {"program files", "Program Files"}, {"ok", "OK"},
     };
@@ -428,9 +434,27 @@ void DialogButton(OverlayFrame& frame, f32 x, f32 y, u32 text, bool primary, Hit
     regions.push_back({kind, x, y, Width, Height, -1, -1, -1});
 }
 
-// Portable mode's dialog (settings.cpp) over the screen: its title and message, then yes and no (asked), OK (refused, failed, done:
-// the game closes, by itself after a few seconds) or the copy's bar and its megabytes. Done says where the old folder went, failed
-// what went wrong (in English, as the log has it)
+// The credits' parts and people (README.md's "Credits")
+struct Credit
+{
+    u32 part;
+    const char* people;
+};
+constexpr Credit Credits[] = {
+    {TextCreditsWindows, "GioPixelGH"},
+    {TextCreditsDecompilation, "Smartkin"},
+    {TextCreditsMac, "HAB3X"},
+    {TextCreditsImproved, "AlexMollard, TechieSaru"},
+    {TextCreditsLinux, "Gabriel-TwoBits"},
+    {TextCreditsTesters, "NitorikoSkye, SSStylishh, APerson7778, VenezuelanHell"},
+    {TextCreditsTextures, "CRASHARKI"},
+    {TextCreditsEvolved, "menaman123"},
+    {TextCreditsThanks, "Onaga00"},
+};
+
+// The settings' dialogs (settings.cpp) over the screen. Portable mode's: its title and message, then yes and no (asked), OK
+// (refused, failed, done: the game closes, by itself after a few seconds) or the copy's bar and its megabytes. Done says where the
+// old folder went, failed what went wrong (in English, as the log has it). Quitting's question (yes and no), the credits (OK)
 void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const BoxStyle& panel, std::vector<HitRegion>& regions)
 {
     constexpr f32 Width = 660.0f;
@@ -446,7 +470,15 @@ void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const Box
                   : view.dialog == DialogRefused ? TextPortableRefused
                   : view.dialog == DialogCopying ? TextPortableCopying
                   : view.dialog == DialogDone    ? TextPortableDone
+                  : view.dialog == DialogQuit    ? TextQuitAsk
+                  : view.dialog == DialogImporting ? TextModsImporting
+                  : view.dialog == DialogImported  ? TextModsImported
+                  : view.dialog == DialogImportFailed ? TextModsImportFailed
                                                  : TextPortableFailed;
+    const bool importing = view.dialog == DialogImporting || view.dialog == DialogImported || view.dialog == DialogImportFailed;
+    const u32 heading = view.dialog == DialogQuit ? TextQuitDesktop : view.dialog == DialogCredits ? TextCredits
+                        : importing                ? TextModsImport
+                                                   : TextPortable;
     std::string text = Sentence(Text(message));
     if (view.dialog == DialogDone)
     {
@@ -456,16 +488,36 @@ void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const Box
     }
 
     f32 textWidth = Width - Pad * 2.0f;
-    std::vector<std::string> lines = Wrapped(text, textWidth, body);
+    std::vector<std::string> lines;
+    if (view.dialog == DialogCredits)
+    {
+        // The README's credits: each part's people (their own names, as they write them)
+        for (const Credit& credit : Credits)
+        {
+            for (const std::string& line : Wrapped(Sentence(Text(credit.part)) + ": " + credit.people, textWidth, body))
+            {
+                lines.push_back(line);
+            }
+        }
+    }
+    else
+    {
+        lines = Wrapped(text, textWidth, body);
+    }
+
     std::vector<std::string> notes;
     if (view.dialog == DialogDone && !view.backup.empty())
     {
         lines.push_back(Sentence(Text(TextPortableBackup)));
         lines.push_back("\"" + view.backup + "\"");
     }
-    else if (view.dialog == DialogFailed && !view.failure.empty())
+    else if ((view.dialog == DialogFailed || view.dialog == DialogImportFailed) && !view.failure.empty())
     {
         notes = Wrapped(view.failure, textWidth, note);
+    }
+    else if (view.dialog == DialogImporting && !view.backup.empty())
+    {
+        notes = Wrapped(view.backup, textWidth, note);
     }
 
     f32 height = 32.0f + 36.0f + 10.0f + static_cast<f32>(lines.size()) * LineHeight + static_cast<f32>(notes.size()) * NoteHeight +
@@ -476,7 +528,7 @@ void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const Box
     frame.Box(0.0f, 0.0f, ReferenceWidth, ReferenceHeight, dim);
     frame.Box(Left, top, Width, height, panel);
     f32 y = top + 32.0f + 18.0f;
-    frame.Text(Sentence(Text(TextPortable)), ReferenceWidth * 0.5f, y, title, OverlayAlign::Centre);
+    frame.Text(Sentence(Text(heading)), ReferenceWidth * 0.5f, y, title, OverlayAlign::Centre);
     y += 18.0f + 10.0f + LineHeight * 0.5f;
     for (const std::string& line : lines)
     {
@@ -495,6 +547,7 @@ void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const Box
     switch (view.dialog)
     {
     case DialogAsk:
+    case DialogQuit:
         // The chosen one lit (left and right, or the mouse, choose it)
         DialogButton(frame, ReferenceWidth * 0.5f - 170.0f, bottomTop, GameTextYes, view.dialogOnYes, HitKind::DialogYes, regions);
         DialogButton(frame, ReferenceWidth * 0.5f + 30.0f, bottomTop, GameTextNo, !view.dialogOnYes, HitKind::DialogNo, regions);
@@ -519,6 +572,27 @@ void DrawPortableDialog(OverlayFrame& frame, const SettingsView& view, const Box
         std::snprintf(megabytes, sizeof(megabytes), "%.1f / %.1f MB", static_cast<double>(view.copied) / (1024.0 * 1024.0),
                       static_cast<double>(view.copyTotal) / (1024.0 * 1024.0));
         frame.Text(megabytes, ReferenceWidth * 0.5f, bottomTop + 16.0f + 16.0f, note, OverlayAlign::Centre);
+        break;
+    }
+    case DialogImporting:
+    {
+        // The bar, and how far the import is
+        BoxStyle track;
+        track.fill = PillFill;
+        track.radius = 8.0f;
+        frame.Box(Left + Pad, bottomTop, textWidth, 16.0f, track);
+        f32 share = view.copyTotal != 0 ? std::min(1.0f, static_cast<f32>(view.copied) / static_cast<f32>(view.copyTotal)) : 0.0f;
+        if (share > 0.0f)
+        {
+            BoxStyle fill;
+            fill.fill = Orange;
+            fill.radius = 8.0f;
+            frame.Box(Left + Pad, bottomTop, std::max(16.0f, textWidth * share), 16.0f, fill);
+        }
+
+        char percent[16];
+        std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(share * 100.0f));
+        frame.Text(percent, ReferenceWidth * 0.5f, bottomTop + 16.0f + 16.0f, note, OverlayAlign::Centre);
         break;
     }
     default:
@@ -864,7 +938,28 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
         }
 
         regions.push_back({HitKind::Row, rowLeft, std::max(top, rowsTop), rowWidth, RowHeight, index, -1, -1});
-        frame.Text(Sentence(Text(row.label)), rowLeft + RowPad, middle, Body(21.0f, colours.label));
+        if (row.labelText)
+        {
+            // A mod's name, cut short of the value
+            TextStyle style = Body(21.0f, colours.label);
+            std::string label = row.labelText();
+            const f32 room = valueCentre - ValueWidth * 0.5f - 24.0f - (rowLeft + RowPad);
+            if (OverlayTextWidth(label, style) > room)
+            {
+                while (!label.empty() && OverlayTextWidth(label + "...", style) > room)
+                {
+                    label.pop_back();
+                }
+
+                label += "...";
+            }
+
+            frame.Text(label, rowLeft + RowPad, middle, style);
+        }
+        else
+        {
+            frame.Text(Sentence(Text(row.label)), rowLeft + RowPad, middle, Body(21.0f, colours.label));
+        }
         switch (row.kind)
         {
         case RowChoice:
@@ -977,7 +1072,9 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
     }
 
     // The description of the highlighted row (or what's waited for)
-    std::string description = view.capturing ? Text(TextPressKey) : Text(selectedRow.description);
+    std::string description = view.capturing                 ? Text(TextPressKey)
+                              : selectedRow.descriptionText ? selectedRow.descriptionText()
+                                                            : Text(selectedRow.description);
     TextStyle describe = Body(19.0f, Hex(0xd6e8ff));
     DescriptionLine(frame, Sentence(description), 360.0f, 612.0f + OverlayLineHeight(describe) * 0.5f, describe);
 
@@ -1028,6 +1125,27 @@ void DrawGameMenuChrome(OverlayFrame& frame, std::vector<HitRegion>& regions)
     if (controller == nullptr)
     {
         return;
+    }
+
+    // A newer release found by the update check (updatecheck.h): said in the main menu, at the top, "version 1.3.0 is out:
+    // options, gameplay." (the page's row is there; the text's x.y.z is the version)
+    std::string newer;
+    if (controller->State() == GameController::StateMainMenu && Native::NewerRelease(&newer, nullptr))
+    {
+        std::string notice = Sentence(Text(TextUpdateNotice));
+        const size_t mark = notice.find("x.y.z");
+        if (mark != std::string::npos)
+        {
+            notice.replace(mark, 5, newer);
+        }
+
+        TextStyle style = Body(19.0f, White, true);
+        const f32 width = OverlayTextWidth(notice, style) + 40.0f;
+        BoxStyle pill;
+        pill.fill = Hex(0x000000, 0.55f);
+        pill.radius = 18.0f;
+        frame.Box((ReferenceWidth - width) * 0.5f, 24.0f, width, 36.0f, pill);
+        frame.Text(notice, ReferenceWidth * 0.5f, 42.0f, style, OverlayAlign::Centre);
     }
 
     // The game's hints (OLEG's labels): the game draws them itself (their glyphs the controller's: SetPromptLabels), or the bar
@@ -1125,5 +1243,10 @@ void DrawCursor(OverlayFrame& frame, f32 x, f32 y, bool overClickable)
     f32 height = 44.0f * pulse;
     f32 width = height * 0.5f;
     frame.Image(OverlayImage::Cursor, x - width * 0.35f, y - height * 0.08f, width, height);
+}
+
+f32 DescriptionWidth(const std::string& gameText)
+{
+    return OverlayTextWidth(Sentence(gameText), Body(19.0f, Hex(0xd6e8ff)));
 }
 }

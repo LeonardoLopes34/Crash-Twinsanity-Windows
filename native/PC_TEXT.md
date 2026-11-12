@@ -70,7 +70,7 @@ The graphic options' resolution setting (NATIVE.md) adds texts of its own after 
 | 0x119 | 120 hz | 120 hz | 120 hz | 120 hz | 120 hz |
 | 0x11A | 144 hz | 144 hz | 144 hz | 144 hz | 144 hz |
 | 0x11B | unlimited | illimitée | unbegrenzt | ilimitada | illimitata |
-| 0x11C | language | langue | sprache | idioma | lingua |
+| 0x11C | text language | langue des textes | textsprache | idioma de los textos | lingua dei testi |
 | 0x11D | as windows | comme windows | wie windows | como windows | come windows |
 | 0x11E | english | english | english | english | english |
 | 0x11F | français | français | français | français | français |
@@ -133,11 +133,11 @@ The graphic options' resolution setting (NATIVE.md) adds texts of its own after 
 | 0x158 | smooth or sharp pixels when the picture is scaled. | pixels lissés ou nets à l'agrandissement. | weiche oder scharfe pixel beim skalieren. | píxeles suaves o nítidos al escalar. | pixel morbidi o nitidi nel ridimensionamento. |
 | 0x159 | smooth the game's textures at a larger size. | textures lissées en plus grand. | texturen größer und glatter. | texturas suavizadas a mayor tamaño. | texture levigate più grandi. |
 | 0x15A | use the textures of a texture pack. | utiliser un pack de textures. | texturen eines texturpakets nutzen. | usar un pack de texturas. | usa un pacchetto di texture. |
-| 0x15B | fxaa smooths the picture's edges. ssaa draws it 2 or 4 times larger and shrinks it: smoother, slower. | fxaa lisse les bords. ssaa dessine l'image 2 ou 4 fois plus grande puis la réduit : plus lisse, plus lent. | fxaa glättet kanten. ssaa zeichnet das bild 2- oder 4-mal größer, dann kleiner: glatter, langsamer. | fxaa suaviza bordes. ssaa dibuja la imagen 2 o 4 veces mayor y la reduce: más suave, más lento. | fxaa leviga i bordi. ssaa disegna l'immagine 2 o 4 volte più grande e la riduce: più liscia, più lenta. |
+| 0x15B | fxaa and smaa smooth the edges, smaa better. ssaa draws the picture 2 or 4 times larger: slower. | fxaa et smaa lissent les bords, smaa mieux. ssaa dessine l'image 2 ou 4 fois plus grande : plus lent. | fxaa und smaa glätten kanten, smaa besser. ssaa zeichnet das bild 2- oder 4-mal größer: langsamer. | fxaa y smaa suavizan bordes, smaa mejor. ssaa dibuja la imagen 2 o 4 veces mayor: más lento. | fxaa e smaa levigano i bordi, smaa meglio. ssaa disegna l'immagine 2 o 4 volte più grande: più lento. |
 | 0x15C | wait for the screen's refresh: no tearing. | synchronisé à l'écran: pas de déchirure. | auf den bildschirm warten: kein tearing. | sincronizar con la pantalla: sin cortes. | sincronizza con lo schermo: niente tearing. |
 | 0x15D | the look of an old crt television. | l'aspect d'une vieille télévision. | wie ein alter röhrenfernseher. | el aspecto de una tele antigua. | l'aspetto di un vecchio televisore. |
 | 0x15E | 50 hz is the original timing. above 60 needs a fast pc. | 50 hz est la cadence d'origine. au-delà de 60, un pc rapide. | 50 hz ist das original. über 60 braucht einen schnellen pc. | 50 hz es el ritmo original. más de 60 pide un pc rápido. | 50 hz è la frequenza originale. oltre 60 serve un pc veloce. |
-| 0x15F | texts, voices and movies. from the game's next start. | textes, voix et films. au prochain lancement du jeu. | texte, stimmen und filme. ab dem nächsten spielstart. | textos, voces y vídeos. al volver a abrir el juego. | testi, voci e filmati. dal prossimo avvio del gioco. |
+| 0x15F | the texts and title pictures, and the voices unless chosen below. from the next start. | les textes et les titres, et les voix sauf choix plus bas. au prochain lancement. | texte und titelbilder, die stimmen auch, außer unten gewählt. ab dem nächsten start. | los textos y los títulos, y las voces salvo que elijas abajo. al volver a abrir el juego. | i testi e i titoli, e le voci se non scelte sotto. dal prossimo avvio del gioco. |
 | 0x160 | move the picture on the screen. | déplacer l'image à l'écran. | das bild verschieben. | mover la imagen en pantalla. | sposta l'immagine sullo schermo. |
 | 0x161 | the music's volume. | le volume de la musique. | die lautstärke der musik. | el volumen de la música. | il volume della musica. |
 | 0x162 | the sound effects' volume. | le volume des sons. | die lautstärke der effekte. | el volumen de los efectos. | il volume degli effetti. |
@@ -239,6 +239,64 @@ The graphic options' resolution setting (NATIVE.md) adds texts of its own after 
 | 0x1C2 | original | d'origine | original | original | originale |
 | 0x1C3 | medium | moyenne | mittel | media | media |
 | 0x1C4 | long | longue | weit | larga | lunga |
+| 0x1C5 | quit to desktop | quitter vers le bureau | zum desktop beenden | salir al escritorio | esci al desktop |
+| 0x1C6 | closes the game as the window's close button does. progress not saved is lost. | ferme le jeu comme le bouton de la fenêtre. la progression non sauvegardée est perdue. | schließt das spiel wie der knopf des fensters. nicht gespeicherter fortschritt geht verloren. | cierra el juego como el botón de la ventana. el progreso no guardado se pierde. | chiude il gioco come il pulsante della finestra. i progressi non salvati vanno persi. |
+| 0x1C7 | quit the game now? progress not saved is lost. | quitter le jeu maintenant ? la progression non sauvegardée est perdue. | das spiel jetzt beenden? nicht gespeicherter fortschritt geht verloren. | ¿salir del juego ahora? el progreso no guardado se pierde. | uscire dal gioco adesso? i progressi non salvati vanno persi. |
+| 0x1C8 | credits | crédits | mitwirkende | créditos | riconoscimenti |
+| 0x1C9 | the people who made this port and the work it stands on. | les personnes qui ont fait ce portage et le travail sur lequel il repose. | die leute hinter dieser portierung und der arbeit, auf der sie aufbaut. | las personas que hicieron este port y el trabajo en el que se basa. | le persone che hanno fatto questo port e il lavoro su cui si basa. |
+| 0x1CA | the windows port | le portage windows | die windows-portierung | el port para windows | il port per windows |
+| 0x1CB | the decompilation | la décompilation | die dekompilierung | la descompilación | la decompilazione |
+| 0x1CC | the mac port | le portage mac | die mac-portierung | el port para mac | il port per mac |
+| 0x1CD | crash twinsanity improved's fixes and 21:9 | les corrections et le 21:9 de crash twinsanity improved | korrekturen und 21:9 aus crash twinsanity improved | las correcciones y el 21:9 de crash twinsanity improved | le correzioni e il 21:9 di crash twinsanity improved |
+| 0x1CE | the linux build | la version linux | die linux-version | la versión para linux | la versione per linux |
+| 0x1CF | tests and reports | tests et rapports | tests und berichte | pruebas e informes | prove e segnalazioni |
+| 0x1D0 | the hd texture pack | le pack de textures hd | das hd-texturpaket | el pack de texturas hd | il pacchetto di texture hd |
+| 0x1D1 | code from twinsanityevolved | du code de twinsanityevolved | code aus twinsanityevolved | código de twinsanityevolved | codice da twinsanityevolved |
+| 0x1D2 | voice language | langue des voix | sprache der stimmen | idioma de las voces | lingua delle voci |
+| 0x1D3 | the voices and the movies' sound: as the texts, or another. from the next start. | les voix et le son des films : comme les textes, ou une autre. au prochain lancement. | stimmen und ton der filme: wie die texte oder eine andere. ab dem nächsten start. | las voces y el sonido de los vídeos: como los textos u otro. al volver a abrir el juego. | le voci e l'audio dei filmati: come i testi, o un'altra. dal prossimo avvio del gioco. |
+| 0x1D4 | as the texts | comme les textes | wie die texte | como los textos | come i testi |
+| 0x1D5 | português | português | português | português | português |
+| 0x1D6 | nederlands | nederlands | nederlands | nederlands | nederlands |
+| 0x1D7 | smaa | smaa | smaa | smaa | smaa |
+| 0x1D8 | anisotropic filtering | filtrage anisotrope | anisotrope filterung | filtrado anisotrópico | filtro anisotropico |
+| 0x1D9 | textures seen at an angle (floors, paths) sharper. off is the ps2's look. | textures vues de biais (sols, chemins) plus nettes. désactivé : comme la ps2. | texturen im schrägen winkel (böden, wege) schärfer. aus: wie die ps2. | texturas vistas en ángulo (suelos, caminos) más nítidas. desactivado: como la ps2. | texture viste di sbieco (pavimenti, sentieri) più nitide. disattivato: come la ps2. |
+| 0x1DA | check for updates | vérifier les mises à jour | nach updates suchen | buscar actualizaciones | controlla aggiornamenti |
+| 0x1DB | at each start, asks github for the latest version. it never downloads anything. | à chaque lancement, demande à github la dernière version. rien n'est téléchargé. | fragt bei jedem start github nach der neuesten version. lädt nie etwas herunter. | en cada inicio, pregunta a github por la última versión. nunca descarga nada. | a ogni avvio chiede a github l'ultima versione. non scarica mai niente. |
+| 0x1DC | new version's page | page de la nouvelle version | seite der neuen version | página de la nueva versión | pagina della nuova versione |
+| 0x1DD | opens the new version's page on github in your browser. | ouvre la page de la nouvelle version sur github dans ton navigateur. | öffnet die seite der neuen version auf github im browser. | abre la página de la nueva versión en github en tu navegador. | apre la pagina della nuova versione su github nel browser. |
+| 0x1DE | version x.y.z is out: options, gameplay. | la version x.y.z est sortie : options, jeu. | version x.y.z ist da: optionen, spiel. | ya está la versión x.y.z: opciones, juego. | è uscita la versione x.y.z: opzioni, gioco. |
+| 0x1DF | infinite lives | vies infinies | unendliche leben | vidas infinitas | vite infinite |
+| 0x1E0 | a death costs no life: the count stays where it is. off plays as the original. | une mort ne fait perdre aucune vie : le compteur ne bouge pas. désactivé : comme l'original. | ein tod kostet kein leben: der zähler bleibt. aus: wie das original. | morir no cuesta vidas: el contador no cambia. desactivado: como el original. | morire non costa vite: il conteggio resta. disattivato: come l'originale. |
+| 0x1E1 | stronger aku aku | aku aku plus fort | stärkerer aku aku | aku aku más fuerte | aku aku più forte |
+| 0x1E2 | aku aku's masks also take tnt and nitro blasts, as in the earlier crash games. | les masques d'aku aku encaissent aussi tnt et nitro, comme dans les anciens crash. | aku akus masken halten auch tnt und nitro aus, wie in den früheren crash-spielen. | las máscaras de aku aku aguantan también tnt y nitro, como en los crash anteriores. | le maschere di aku aku reggono anche tnt e nitro, come nei crash precedenti. |
+| 0x1E3 | slide jump | saut glissé | rutschsprung | salto deslizante | salto in scivolata |
+| 0x1E4 | the long jump from a slide: at any moment of it, or easier (a later press, steered in the air). | le saut long depuis une glissade : à tout moment, ou plus facile (plus tard, dirigé en l'air). | der weitsprung aus dem rutschen: jederzeit oder leichter (später drücken, in der luft lenken). | el salto largo al deslizarte: en cualquier momento, o más fácil (más tarde, dirigido en el aire). | il salto lungo dalla scivolata: in qualunque momento, o più facile (più tardi, guidato in aria). |
+| 0x1E5 | any moment | à tout moment | jederzeit | en cualquier momento | in qualunque momento |
+| 0x1E6 | easier | plus facile | leichter | más fácil | più facile |
+| 0x1E7 | start any level from the main menu. what you save then is kept apart from your saves. | lancer n'importe quel niveau depuis le menu principal. ses sauvegardes restent à part. | jedes level aus dem hauptmenü starten. was du dann speicherst, bleibt getrennt. | empezar cualquier nivel desde el menú principal. lo que guardes entonces queda aparte. | inizia qualsiasi livello dal menu principale. ciò che salvi allora resta separato. |
+| 0x1E8 | level | niveau | level | nivel | livello |
+| 0x1E9 | the level to start, from its beginning. the story is opened up to it. | le niveau à lancer, depuis son début. l'histoire est ouverte jusqu'à lui. | das level, von seinem anfang an. die geschichte ist bis dorthin offen. | el nivel que empezar, desde el principio. la historia se abre hasta él. | il livello da iniziare, dal suo inizio. la storia è aperta fino a lì. |
+| 0x1EA | start the level | lancer le niveau | level starten | empezar el nivel | inizia il livello |
+| 0x1EB | from the main menu | depuis le menu principal | aus dem hauptmenü | desde el menú principal | dal menu principale |
+| 0x1EC | quit to the main menu, then open the options there to start a level. | quitte vers le menu principal, puis ouvre les options pour lancer un niveau. | zum hauptmenü beenden und dort in den optionen ein level starten. | sal al menú principal y abre allí las opciones para empezar un nivel. | esci al menu principale e apri lì le opzioni per iniziare un livello. |
+| 0x1ED | speedrun timer | chrono speedrun | speedrun-timer | cronómetro speedrun | cronometro speedrun |
+| 0x1EE | real time from new game, with each level's time as you finish it. | temps réel depuis nouvelle partie, avec le temps de chaque niveau fini. | echtzeit ab neues spiel, mit der zeit jedes beendeten levels. | tiempo real desde nueva partida, con el tiempo de cada nivel al acabarlo. | tempo reale da nuova partita, con il tempo di ogni livello finito. |
+| 0x1EF | drop shadow | ombre au sol | bodenschatten | sombra bajo el personaje | ombra a terra |
+| 0x1F0 | a round shadow under you while you're in the air, to see where you'll land. | une ombre ronde sous toi en l'air, pour voir où tu vas atterrir. | ein runder schatten unter dir in der luft, um zu sehen, wo du landest. | una sombra redonda bajo ti en el aire, para ver dónde caerás. | un'ombra rotonda sotto di te in aria, per vedere dove atterrerai. |
+| 0x1F1 | shadows on crates | ombres sur les caisses | schatten auf kisten | sombras en las cajas | ombre sulle casse |
+| 0x1F2 | your shadow falls on the tops of crates too. from a level's next loading. | ton ombre tombe aussi sur le dessus des caisses. au prochain chargement d'un niveau. | dein schatten fällt auch auf kisten. ab dem nächsten laden eines levels. | tu sombra cae también sobre las cajas. desde la próxima carga de un nivel. | la tua ombra cade anche sopra le casse. dal prossimo caricamento di un livello. |
+| 0x1F3 | thanks | remerciements | dank | agradecimientos | ringraziamenti |
+| 0x1F4 | mods | mods | mods | mods | mod |
+| 0x1F5 | import mods | importer des mods | mods importieren | importar mods | importa mod |
+| 0x1F6 | turns the zips and disc images in the mods folder into mods. from the next start. | transforme les zip et images disque du dossier mods en mods. au prochain lancement. | macht aus den zips und disc-images im mods-ordner mods. ab dem nächsten start. | convierte los zip e imágenes de disco de la carpeta mods en mods. al volver a abrir el juego. | trasforma zip e immagini disco della cartella mods in mod. dal prossimo avvio del gioco. |
+| 0x1F7 | open the mods folder | ouvrir le dossier mods | mods-ordner öffnen | abrir la carpeta mods | apri la cartella mods |
+| 0x1F8 | put mods there. where two change a file, the first on wins. changes from the next start. | mets-y les mods. si deux changent un fichier, le premier activé gagne. au prochain lancement. | leg die mods dort ab. ändern zwei eine datei, gilt die erste aktive. ab dem nächsten start. | pon ahí los mods. si dos cambian un archivo, gana el primero activo. al volver a abrir el juego. | mettici le mod. se due cambiano un file, vince la prima attiva. dal prossimo avvio del gioco. |
+| 0x1F9 | files in the mods folder | fichiers du dossier mods | dateien im mods-ordner | archivos de la carpeta mods | file nella cartella mods |
+| 0x1FA | importing the mods: a disc image takes a minute or two. | import des mods : une image disque prend une minute ou deux. | mods werden importiert: ein disc-image dauert ein, zwei minuten. | importando los mods: una imagen de disco tarda un minuto o dos. | importazione delle mod: un'immagine disco richiede un minuto o due. |
+| 0x1FB | done: the mods are used from the next start of the game. | terminé : les mods sont utilisés au prochain lancement du jeu. | fertig: die mods gelten ab dem nächsten start des spiels. | hecho: los mods se usan al volver a abrir el juego. | fatto: le mod si usano dal prossimo avvio del gioco. |
+| 0x1FC | something couldn't be imported: the reason is in log.txt. | quelque chose n'a pas pu être importé : la raison est dans log.txt. | etwas konnte nicht importiert werden: der grund steht in log.txt. | algo no se pudo importar: el motivo está en log.txt. | qualcosa non è stato importato: il motivo è in log.txt. |
+| 0x1FD | can't be used: | inutilisable : | nicht nutzbar: | no se puede usar: | non utilizzabile: |
+| 0x1FE | its program changes don't apply. | ses changements du programme ne s'appliquent pas. | seine programmänderungen gelten nicht. | sus cambios del programa no se aplican. | le sue modifiche al programma non valgono. |
 
 ## English (29 lines)
 

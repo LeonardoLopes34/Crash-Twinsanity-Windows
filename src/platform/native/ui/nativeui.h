@@ -251,6 +251,78 @@ enum NativeText : u32
     TextDistanceOriginal,
     TextDistanceMedium,
     TextDistanceLong,
+    // Quitting to the desktop (#33) and the credits (settings.cpp's Gameplay page, settingsview.cpp's dialogs)
+    TextQuitDesktop,
+    TextDescQuitDesktop,
+    TextQuitAsk,
+    TextCredits,
+    TextDescCredits,
+    TextCreditsWindows,
+    TextCreditsDecompilation,
+    TextCreditsMac,
+    TextCreditsImproved,
+    TextCreditsLinux,
+    TextCreditsTesters,
+    TextCreditsTextures,
+    TextCreditsEvolved,
+    // The speech language (settings.cpp's Gameplay page) and the languages a text bank can be in besides the five (languages.cpp)
+    TextSpeechLanguage,
+    TextDescSpeechLanguage,
+    TextLanguageAsTexts,
+    TextLanguagePortuguese,
+    TextLanguageDutch,
+    // SMAA (the Display page)
+    TextSmaa,
+    // Anisotropic filtering (the Display page)
+    TextAnisotropic,
+    TextDescAnisotropic,
+    // The update check (the Gameplay page) and its notice in the main menu
+    TextUpdateCheck,
+    TextDescUpdateCheck,
+    TextUpdatePage,
+    TextDescUpdatePage,
+    TextUpdateNotice,
+    // The game options (settings.cpp's Gameplay page): infinite lives
+    TextInfiniteLives,
+    TextDescInfiniteLives,
+    // The stronger Aku Aku mask
+    TextStrongMask,
+    TextDescStrongMask,
+    // The slide jump and its choices
+    TextSlideJump,
+    TextDescSlideJump,
+    TextSlideJumpAnyMoment,
+    TextSlideJumpEasier,
+    // The level select: the option (its name the older TextLevelSelect), the level chosen, starting it, or where it starts from
+    TextDescLevelSelect,
+    TextLevelSelectLevel,
+    TextDescLevelSelectLevel,
+    TextLevelSelectStart,
+    TextLevelSelectFromMainMenu,
+    TextDescLevelSelectFromMainMenu,
+    // The speedrun timer
+    TextSpeedrunTimer,
+    TextDescSpeedrunTimer,
+    // The drop shadow
+    TextDropShadow,
+    TextDescDropShadow,
+    // The shadows on crates
+    TextShadowsOnCrates,
+    TextDescShadowsOnCrates,
+    // The credits' thanks (settingsview.cpp's Credits)
+    TextCreditsThanks,
+    // The Mods page (settings.cpp; mods.h)
+    TextTabMods,
+    TextModsImport,
+    TextDescModsImport,
+    TextModsOpenFolder,
+    TextDescModsOpenFolder,
+    TextModsLoose,
+    TextModsImporting,
+    TextModsImported,
+    TextModsImportFailed,
+    TextModRefused,
+    TextModProgram,
     NativeTextEnd,
 };
 
@@ -310,8 +382,10 @@ bool ChoicesChanged(s32 scaleChoice, s32 displayChoice);
 // by the player's own choice)
 void ApplySavedResolution();
 // The defaults, the first start's and the display settings' reset alike: 2x the PS2's picture (1280 x 1024: sharp on a modern
-// screen, light on a laptop's graphics) in a 1280 x 720 window (16:9 like the widescreen default, and it fits a 1366 x 768 laptop)
+// screen, light on a laptop's graphics) in a 1280 x 720 window (16:9 like the widescreen default, and it fits a 1366 x 768 laptop);
+// on a Steam Deck (Native::SteamDeckModel) fullscreen, its 1280 x 800 screen, at 2x too
 Resolution DefaultResolution();
+Resolution DefaultResolutionFor(bool steamDeck);
 
 
 // ---------------------------------------------------------------------------------------------------------- the native options
@@ -348,7 +422,7 @@ enum Option : u32
     // The mouse in the menus (hover selects, click picks, right click goes back)
     OptionMouse,
     // The settings screen's display and audio settings the game doesn't keep itself (the graphics' texture upscale 0-2, not on
-    // the screen until the graphics have it; the texture pack; anti-aliasing 0 off, 1 FXAA, 2 and 3 SSAA 2x and 4x; v-sync; the music and effects volumes
+    // the screen until the graphics have it; the texture pack; anti-aliasing 0 off, 1 FXAA, 2 and 3 SSAA 2x and 4x, 4 SMAA; v-sync; the music and effects volumes
     // 0-10, the output type, vibration, given to the game at start-up)
     OptionTextureUpscale,
     OptionTexturePack,
@@ -374,8 +448,9 @@ enum Option : u32
     OptionMouseLook,
     OptionMouseSensitivity,
     OptionInvertMouseY,
-    // The game's language (its texts, its voices, its movies' sound): the computer's (0, as the PS2 took its own), English,
-    // French, German, Italian or Spanish; the game takes it when it starts (system.cpp's Platform::System::Language)
+    // The game's language (its texts, and its voices and movies' sound unless OptionSpeechLanguage chooses another): the
+    // computer's (0, as the PS2 took its own), English, French, German, Italian or Spanish; the game takes it when it starts
+    // (system.cpp's Platform::System::Language)
     OptionLanguage,
     // More of what the game does written to the log (trail.cpp), for bug reports
     OptionDetailedLog,
@@ -390,6 +465,30 @@ enum Option : u32
     // How far the game draws (renderdistance.h, HAB3X's): the original (0), short (1: 0.6 times the distances), medium (2: twice),
     // long (3: three times) or unlimited (4: no level of detail's cut-off, the far plane four times); codes, not the menu's order
     OptionRenderDistance,
+    // The voices' language (languages.cpp): as the texts' (0, the language option's), or English, French, German, Italian or
+    // Spanish (the language option's numbers); the game takes it when it starts
+    OptionSpeechLanguage,
+    // Anisotropic filtering of the game's mipmapped textures (hwgs.cpp's ANISO): off (0, the PS2's sampling), 2x, 4x, 8x, 16x
+    OptionAnisotropy,
+    // 32:9: the widescreen picture made 32:9 wide (as 21:9's: the projection, the 2D's squeeze, the movies' pillarbox); only while
+    // widescreen is on, the 21:9 option off
+    OptionSuperUltrawide,
+    // The update check (updatecheck.h): at each start, GitHub asked once for the latest release (off by default)
+    OptionUpdateCheck,
+    // The game options (gameoptions.h, all off by default): infinite lives
+    OptionInfiniteLives,
+    // The stronger Aku Aku mask (#30)
+    OptionStrongMask,
+    // The slide jump (#11, #35): 0 the original, 1 any moment, 2 easier
+    OptionSlideJump,
+    // The level select (levelselect.cpp: from the main menu, a memory card of its own)
+    OptionLevelSelect,
+    // The speedrun timer (speedrun.cpp)
+    OptionSpeedrunTimer,
+    // The drop shadow under the player (dropshadow.cpp)
+    OptionDropShadow,
+    // The player's shadow on crates' tops too
+    OptionShadowsOnCrates,
     OptionCount,
 };
 
@@ -416,6 +515,10 @@ std::string TrailNow();
 // The log's start (sessionlog.cpp): every option as options.txt names it, and whether they're options.txt's or the defaults (a
 // first start), in two lines (options.cpp); the saved resolution or the defaults (resolution.cpp)
 void LogOptions();
+// The languages (languages.cpp): a text choice's bank's language by its content when it isn't the choice's name ("portuguese";
+// nullptr when it is, or isn't recognised; option 1-5), and the log's line about them (the disc open)
+const char* TextBankLanguage(s32 option);
+void LogLanguages();
 void LogResolution();
 // The settings changed since the log last gave them, a line each ("options: refresh_60hz 3 -> 1 (144 Hz -> 60 Hz)"): options.txt's
 // (options.cpp), the resolution and the display (resolution.cpp), the controls (bindings.cpp). Each change's value is compared with
@@ -435,6 +538,19 @@ void ApplyGameSettingsOnce();
 // (GameController::Update): the fullscreen toggle, the mute, the 60 Hz pacing
 void StartOptions();
 void Frame();
+// The level select (levelselect.cpp, the game option): the game's levels (their names the code file's texts from LevelNameTexts),
+// each one's first chunk, whether a level can be started now (the option on, the main menu), a level started (its saves on a card
+// of their own until the title), and its frame's work (the player's card again at the title)
+constexpr u32 LevelCount = 16;
+constexpr u32 LevelNameTexts = 0x47;
+const char* LevelChunk(u32 level);
+bool CanStartLevel();
+void StartLevel(u32 level);
+void LevelSelectFrame();
+// The speedrun timer (speedrun.cpp, the game option): its frame's work (started at New Game, a split at each level's end, stopped
+// at the credits) and its text queued in the game's font after OLEG's widgets
+void SpeedrunFrame();
+void SpeedrunDraw(Renderer* renderer);
 // Once after the window lost the focus (the option on): the game pauses as for its start button
 bool TakeFocusPause();
 // With the cutscene skip option, "hold any button to skip" (features.cpp): any key, mouse button or pad button pressed after the

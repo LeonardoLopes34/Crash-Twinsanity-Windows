@@ -13,6 +13,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
+#ifdef TWIN_NATIVE
+#include "gameoptions.h"
+#include "native.h"
+#endif
 
 extern "C"
 {
@@ -298,7 +305,13 @@ void CrouchController::Slide(f32 turn, s32 time, u32, s32* next)
     s32 steerTicks = TicksOf(properties->GetFloat(PropSlideSteerSeconds));
     s32 elapsed = time - stateStart;
     bool steering = elapsed < steerTicks;
+#ifdef TWIN_NATIVE
+    // The slide jump (the game option, THE LIST 11, #11): from any moment of the slide, its steering's too
+    bits.mayJump = !steering || NativeGame::SlideJump() != 0;
+    NativeGame::SetSlideSteering(steering);
+#else
     bits.mayJump = !steering;
+#endif
     s32 rate;
     f32 speed;
     if (slideSpeed < SlowSpeed)
@@ -326,11 +339,34 @@ void CrouchController::Slide(f32 turn, s32 time, u32, s32* next)
             // Steered: turning to the slide's direction over the seconds left of the steering
             f32 elapsedSeconds = static_cast<f32>(elapsed) * g_SecondsPerClockUnit;
             f32 secondsLeft = static_cast<f32>(steerTicks) * g_SecondsPerClockUnit - elapsedSeconds;
+#ifdef TWIN_NATIVE
+            // The steering's last frame turns over the time left before it ends: a frame that ends a sliver before it (an uneven
+            // frame's clock advance: TwinsanityEvolved 0.9.3's 60 Hz frames are 149 clock units, its last steering frame 9 units
+            // short of the end) gets a rate many times the angle and swings the slide far past the stick's direction. The time left kept at half the frame at least (THE LIST
+            // 36): the PAL disc's 50 Hz ends on half a frame exactly and whole 60 Hz frames (150 units) on a whole one, both
+            // unchanged; only a sliver is. $TWIN_SLIDE_STEERING=retail keeps it (for comparison); $TWIN_SLIDE_TRACE logs each
+            // steering frame and the facing's angle from the slide's direction as the steering ends
+            static const bool retailSteering = std::getenv("TWIN_SLIDE_STEERING") != nullptr &&
+                                               std::strcmp(std::getenv("TWIN_SLIDE_STEERING"), "retail") == 0;
+            if (!retailSteering && secondsLeft < g_FrameSeconds * 0.5f)
+            {
+                secondsLeft = g_FrameSeconds * 0.5f;
+            }
+#endif
             ObjectPlace* place = agent->instance->place;
             RotateAndTranslate(place);
             s32 angle;
             SignedAngleAboutY(&angle, &slideDirection, RowOf(&place->matrix, 2));
             rate = static_cast<s32>(static_cast<f32>(angle) / secondsLeft);
+#ifdef TWIN_NATIVE
+            static const bool steeringTrace = std::getenv("TWIN_SLIDE_TRACE") != nullptr;
+            if (steeringTrace)
+            {
+                Native::Log("slide trace: steering, %d of %d clock units, %.4f s left, the angle %.1f degrees, the rate %d, the turn %.4f",
+                            elapsed, steerTicks, static_cast<double>(secondsLeft), static_cast<double>(angle) * 360.0 / 65536.0, rate,
+                            static_cast<double>(turn));
+            }
+#endif
             if (rate < 0)
             {
                 rate = -rate;
@@ -343,6 +379,28 @@ void CrouchController::Slide(f32 turn, s32 time, u32, s32* next)
 
         speed = properties->GetFloat(PropSlideSpeed);
     }
+
+#ifdef TWIN_NATIVE
+    // $TWIN_SLIDE_TRACE: the facing's angle from the slide's direction as the steering ends (the 60 Hz swing's measure)
+    static const bool slideTrace = std::getenv("TWIN_SLIDE_TRACE") != nullptr;
+    static const CrouchController* traced = nullptr;
+    static bool tracedSteering = false;
+    if (slideTrace)
+    {
+        if (traced == this && tracedSteering && !steering)
+        {
+            ObjectPlace* place = agent->instance->place;
+            RotateAndTranslate(place);
+            s32 angle;
+            SignedAngleAboutY(&angle, &slideDirection, RowOf(&place->matrix, 2));
+            Native::Log("slide trace: the steering over, the facing %.1f degrees from the slide's direction (the frame %.4f s)",
+                        static_cast<double>(angle) * 360.0 / 65536.0, static_cast<double>(turn));
+        }
+
+        traced = this;
+        tracedSteering = steering;
+    }
+#endif
 
     s32 slideTurn = *MultiplyAngle(&rate, turn);
     auto* part = static_cast<CharacterPart*>(agent->part);
@@ -789,6 +847,13 @@ s32 JumpController::Start(TimeClock* clock, u32 kind, u32 maxed, u32 midFall)
         state = StateRisingSlide;
         air = properties->GetFloat(PropSlideAirSpeed);
         turn = TaggedProperty(properties, TaggedSlideTurn);
+#ifdef TWIN_NATIVE
+        // The slide jump made easier (THE LIST 11, #35): steered in the air as a jump is, its height and length the slide's
+        if (NativeGame::SlideJump() == 2)
+        {
+            turn = TaggedProperty(properties, TaggedJumpTurn);
+        }
+#endif
         break;
     case KindLaunch:
         turn = TaggedProperty(properties, TaggedJumpTurn);
@@ -909,6 +974,10 @@ void JumpController::Grounded(TimeClock* clock, u32 mayJump, u32 cross, s32* nex
     auto* part = static_cast<CharacterPart*>(agent->part);
     u32 kind = part->bits.attackKind;
     bool sliding = kind == AttackSlide || kind == AttackSlideVariant;
+#ifdef TWIN_NATIVE
+    // The slide jump made easier (THE LIST 11, #35): the jump pressed just after the slide (getting up) is still the slide's
+    sliding = sliding || NativeGame::SlideJumpLate();
+#endif
     bool canJump;
     if (part->flags.onGround != 0)
     {
@@ -944,6 +1013,14 @@ void JumpController::Grounded(TimeClock* clock, u32 mayJump, u32 cross, s32* nex
     u32 fits = agent->FitsAt(FitSlideJump, 0, &g_JumpUp, nullptr);
     if (sliding && fits != 0)
     {
+#ifdef TWIN_NATIVE
+        // (The slide jump option's jumps said in the log: one the original wouldn't take)
+        if (NativeGame::SlideJumpLate() || (NativeGame::SlideJump() != 0 && NativeGame::SlideSteering()))
+        {
+            Native::Log("slide jump: a long jump %s (the slide jump option)",
+                        NativeGame::SlideJumpLate() ? "pressed just after the slide" : "from the slide's steering");
+        }
+#endif
         *next = Start(clock, KindSlide, 0, 0);
         return;
     }

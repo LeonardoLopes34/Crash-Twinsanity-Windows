@@ -39,6 +39,10 @@ struct Row
     std::function<bool()> shown;
     // A display row whose change asks to be kept (the revert countdown)
     bool asksToKeep;
+    // A row's label and description made when drawn (the Mods page's mods: their names and what they are), in the overlay's
+    // Windows-1252, instead of label's and description's texts
+    std::function<std::string()> labelText;
+    std::function<std::string()> descriptionText;
 };
 
 // The tabs (the research's categories, native/research/MODERN_CRASH_UI.md 3.2; the design's, native/design/options/SPEC.md)
@@ -49,6 +53,7 @@ enum Tab : u32
     TabAudio,
     TabControls,
     TabAccessibility,
+    TabMods,
     TabCount,
     Pages = TabCount,
 };
@@ -62,8 +67,8 @@ enum BindingColumn : u32
     BindingColumns,
 };
 
-// Portable mode's dialog (settings.cpp): none, the switch asked about, refused (the program's folder can't be written to), copying,
-// done (the game closes) or failed
+// The settings' dialogs (settings.cpp). Portable mode's: none, the switch asked about, refused (the program's folder can't be
+// written to), copying, done (the game closes) or failed. Quit to the desktop's question (yes, no), and the credits (OK)
 enum PortableDialog : u32
 {
     DialogNone,
@@ -72,6 +77,13 @@ enum PortableDialog : u32
     DialogCopying,
     DialogDone,
     DialogFailed,
+    DialogQuit,
+    DialogCredits,
+    // The Mods page's import: under way (its bar: copied of copyTotal thousandths, backup the source's name), done, or failed
+    // (failure what went wrong, in English)
+    DialogImporting,
+    DialogImported,
+    DialogImportFailed,
 };
 
 // What the view draws this frame
@@ -119,6 +131,9 @@ class OverlayFrame;
 void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions);
 void DrawGameMenuChrome(OverlayFrame& frame, std::vector<HitRegion>& regions);
 void DrawCursor(OverlayFrame& frame, f32 x, f32 y, bool overClickable);
+// A row's description's width on the screen (reference pixels, the view's font and size: one line from x 360 of 1280)
+f32 DescriptionWidth(const std::string& gameText);
+constexpr f32 DescriptionRoom = 1280.0f - 360.0f - 10.0f;
 // The skip's hold bar under the letterbox's "hold any button to skip" while a button is held (progress 0-1)
 void DrawSkipProgress(OverlayFrame& frame, f32 progress);
 }

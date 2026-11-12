@@ -30,6 +30,7 @@ void NativeGraphicsSetTexturePack(bool);
 void NativeGraphicsSetAntiAliasing(int);
 void NativeGraphicsSetVSync(bool);
 void NativeGraphicsSetDither(int);
+void NativeGraphicsSetAnisotropy(int);
 
 namespace NativeUi
 {
@@ -88,6 +89,10 @@ void ApplyOption(Option option)
     case OptionRenderDistance:
         Native::SetRenderDistance(static_cast<u32>(GetOption(OptionRenderDistance)));
         break;
+    case OptionAnisotropy:
+        // Off (1: the PS2's sampling), 2x, 4x, 8x or 16x
+        NativeGraphicsSetAnisotropy(1 << GetOption(OptionAnisotropy));
+        break;
     case OptionVoiceVolume:
         ApplyVolumes();
         break;
@@ -115,6 +120,7 @@ void ApplyStartOptions()
     ApplyOption(OptionShowFps);
     ApplyOption(OptionDithering);
     ApplyOption(OptionRenderDistance);
+    ApplyOption(OptionAnisotropy);
     ApplyVolumes();
 }
 

@@ -25,6 +25,9 @@ void ParseArguments(int& argc, char** argv);
 // Where the app keeps its settings and saves, and the disc image asked for with the system's file dialog (remembered there)
 std::string SettingsFolder();
 std::string PickDiscImage();
+// A Steam Deck's model ("Galileo, the OLED model"), nullptr on any other computer (steamdeck.cpp: Linux's firmware names, or
+// $TWIN_STEAM_DECK). Its first start is fullscreen, on its own 1280 x 800 screen (ui/resolution.cpp)
+const char* SteamDeckModel();
 
 // The portable install (portable.cpp; Windows only): portable.txt beside the program keeps the settings folder's data in the User
 // folder beside it rather than in %APPDATA%\Crash Twinsanity. Decided at start-up before anything reads the settings (headless: no
@@ -122,6 +125,30 @@ void LogSessionSettings();
 // A frame of the game's (the wait for the vertical blank, the game's thread; the game's thread's work so far): the frames timed
 // while the game is played, a line of performance a minute of play ($TWIN_PERFORMANCE_EVERY seconds)
 void SessionFrame(u64 gameWorkNanoseconds);
+// The game thread's work a slow frame's line splits (sessionlog.cpp; a frame of play over 50 ms): the background work while the
+// game plays (game/context.cpp's BackgroundWork: the chunks' loading, the instances destroyed, the resources' steps, the disk's
+// compaction) and of it the chunks' loading (chunkloading.cpp's UpdateChunkLoading: its loaders, and its readers a file's section
+// at a time), with its longest step; and the game's reads of the disc image (stream.cpp's, wherever they're made: the readers'
+// blocks, the loading screens': any thread). The rest only on the game's thread
+enum class GameWork : u32
+{
+    Background,
+    ChunkLoading,
+    Reading,
+};
+void CountGameWork(GameWork kind, u64 nanoseconds);
+class GameWorkSpan
+{
+public:
+    explicit GameWorkSpan(GameWork kind);
+    ~GameWorkSpan();
+    GameWorkSpan(const GameWorkSpan&) = delete;
+    GameWorkSpan& operator=(const GameWorkSpan&) = delete;
+
+private:
+    GameWork kind_;
+    s64 start_;
+};
 // The session's end, once whichever way it ends: its summary (its time, its play's frame rate) and the line saying how it ended
 // (format: "quit: the window closed", "exit: ..."), with its time and where the game was; EndSessionSummary only the summary
 // (Fatal's line follows it). Crashes: the summary written as the crash report is (no locks, no memory)
@@ -148,16 +175,38 @@ struct Entry
 bool Open(const char* path);
 // A file's place in the image, false when there's none
 bool Find(const char* path, Entry* entry);
+// A file of the image itself, whatever the mods have (importing a changed image compares the two)
+bool FindOriginal(const char* path, Entry* entry);
 // Reads from the image: how many bytes were read
 u32 Read(u64 offset, void* destination, u32 size);
 // Closes the image (one that turned out not to be the game's), so another can be opened
 void Close();
-// Mods (disc.cpp): a file of the archive (CRASH6\CRASH.BD's: "Levels\Earth\Hub\beach.rm2") in the settings folder's mods
-// folder at its path: its start (from the archive's) and size, past the image's end; whether an image offset is a mod's (read
-// whatever the file it was opened as says its size is)
+// Mods (disc.cpp, mods.h): a file of the archive (CRASH6\CRASH.BD's: "Levels\Earth\Hub\beach.rm2") from a mod: its start in the
+// archive's copy (past its own data, the archive's table made again with it) and size; whether an image offset is in the archive's
+// copy or a disc file's mod (read whatever the file it was opened as says its size is)
 bool FindArchiveMod(const char* path, u32* start, u32* size);
 bool IsMod(u64 offset);
 }
+
+// The memory card's folder in the settings folder (memorycard.cpp): "memorycard", or another one a session's saves go to so the
+// player's are never touched (the level select's "memorycard-level-select"); the files open on the card are left as they are, so
+// it's changed only where nothing is being saved (the main menu, a level's loading)
+void UseMemoryCard(const char* name);
+const char* MemoryCardName();
+
+// The disc image recognised for the log (discidentity.cpp): the program its SYSTEM.CNF boots, its size and, once an image, its
+// CRC-32 and SHA-1 against redump.org's dumps ("disc: the retail disc, SLES-52568 v1.01 PAL ..."), kept in disc_identity.txt.
+// The disc open. Hashed on a thread of its own (a player's start), there and then (--identify-disc), or not (--headless's runs:
+// the checks)
+enum class DiscHashing
+{
+    Background,
+    Wait,
+    None,
+};
+void IdentifyDisc(const std::string& image, DiscHashing hashing);
+// A refused image's program and size (the dumps of that size), for the log
+void LogRefusedDisc(const std::string& image);
 
 // The sound processor's memory (the SPU2's 2 MB), where sound banks are streamed to: the audio side plays from it
 constexpr u32 SpuMemorySize = 0x200000;

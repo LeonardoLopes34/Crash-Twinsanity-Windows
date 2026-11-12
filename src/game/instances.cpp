@@ -2,6 +2,7 @@
 
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
+#include "cutsceneskip.h"
 #include "native.h"
 
 #include <unordered_set>
@@ -424,6 +425,8 @@ InstanceContext* InstanceContext::Construct(InstanceContext* instance)
 void InstanceContext::Destroy(u32 destroyFlags)
 {
 #ifdef TWIN_NATIVE
+    // The cutscene skip's bookkeeping lets a destroyed agent go (cutsceneskip.h)
+    ForgetCutsceneAgent(this);
     LiveInstances().erase(this);
 #endif
     vtable = g_InstanceContextVTable;

@@ -135,6 +135,36 @@ Comparing two builds' pictures: `$TWIN_FIXED_TIME=1` with `$TWINSANITY_AUDIO=fra
 gives the same frames run after run (with the sound in real time, a run's speed changes what the game does with it after a
 few hundred frames).
 
+### Hitches
+
+THE LIST 19 (#23: frames of 0.25-1.8 s as new areas load, GNRTX-3's i7-2600 and GT 730 on NVIDIA 472.12, his first 1.1.0
+session; #32: drops to 24 fps at 60). Measured once with the log's slow frames (below, "The log") and `$TWIN_PROFILE`, here
+(i7-8700K, RTX 4070 SUPER) through the hub's links (`$TWIN_HOP=huba,hubb,huba,beach` from the beach) with the driver's shader
+cache emptied (`__GL_SHADER_DISK_CACHE_PATH` an empty folder: as a first start after an update finds it):
+
+- The chunks' loading is spread over frames already: the game's background work fills what's left of a frame up to 1.7 ms
+  before its end (context.cpp's budgets, the PS2's), at most 12 ms a frame here at a chunk change, no step of it over 0.2 ms;
+  the disc's reads 1-2 ms a frame (the image in the system's cache). The profile: the game's thread 70% waiting for the
+  vertical blank, the loading not among its busy functions.
+- What made the frames wait were the hardware renderer's shader programs, one for each new combination of the GS's states,
+  compiled and linked the first time it's drawn (hwgs.cpp's ProgramFor) while the game waits for the render thread: the first
+  frame of play 156-247 ms (11 programs in 119 ms), then 42 ms (2), the first frame in huba 29 ms (1); 25 programs in all,
+  11-23 ms each. The driver's own disk cache makes the next sessions' quick, but every first session of a version (its
+  shaders' source changes) and every driver update pays them, and an old card and driver far more than these.
+- So each start now makes them before anything's drawn (display.cpp's WarmPrograms): those the player's sessions made
+  (`shaders.txt` in the settings folder: each one made while playing is added; another version's list starts again) and this
+  version's own list (KnownPrograms: those check_windows' runs and the hub's walk drew with, the default options); all asked
+  for first (the driver compiles them on its own threads where it has KHR_ or ARB_parallel_shader_compile), then waited for,
+  at the start. Measured: the 25 made at the start in 172 ms (274 one after another; left to their first draw instead, that
+  frame still waited 76 ms for the driver), the slowest frame of the walk 30 ms instead of 247, no program made while playing.
+  A first session (no shaders.txt, the driver's cache empty): this version's 41 made at the start in 277 ms, none while
+  playing, the slowest frame the first of play, 43 ms (OpenGL 33.5 ms, the driver's first drawing; no program made).
+- The frames' times were taken as the game's thread began waiting for the vertical blank, so a frame after one that had
+  waited long counted that wait: 26-29 ms "frames" while a chunk loaded, at 60 frames a second all the same. They're taken as
+  each frame's let go now (display.cpp's WaitForVBlank).
+- Not changed: the disc's reads stay synchronous (a read ahead would help only a slow drive: nothing measured here says so;
+  a player's slow frames say "reading the disc" when it does), and the loading's budget stays the game's.
+
 ## Languages
 
 The PAL game has five: English, French, German, Italian and Spanish, each with its texts (the archive's Language folders), its
@@ -145,17 +175,56 @@ next start.
 
 ## Mods
 
-A file in the settings folder's `mods` folder (`%APPDATA%\Crash Twinsanity\mods`) at the path of one of the game's files is read
-instead of it, in any case, whether it's one of the disc's (`mods\FMV\H01_A.PSS`, the music's banks) or one of its archive's
-(CRASH6\CRASH.BD: `mods\Levels\Earth\Hub\beach.rm2`, `mods\Language\AgentLab\English.txt`, the fonts, the startup
-files...). The log says each one used (`[native] mods: ...`). `CrashTwinsanity.exe --list-files` lists the
-archive's files and `--extract=PATH` copies one (or one of the disc's) into the mods folder to be changed (commands.cpp);
-`native/tools/iso_extract.py IMAGE [--archive] --list` and `iso_extract.py IMAGE [--archive] PATH OUT` do the same without the
-game. The disc.cpp side: a
-disc file's mod is given a place past 16 GB (a GB each, its sectors still 32 bit for the I/O processor), an archive file's one
-past the image's end within 4 GB of the archive's start (filestream.cpp's `FileStreamOpen` takes its start and size), and
-`Native::Disc::Read` reads them from the files. The game's own code does what it would with the original (a file it doesn't
-ask for can't be added: the archive's table is the game's list).
+The modders' and players' side is [MODDING.md](MODDING.md); this is how the port does it.
+
+The settings folder's `mods` folder (`%APPDATA%\Crash Twinsanity\mods`) holds the mods (mods.h, mods.cpp), each a folder: a
+Crate Mod Loader Mod Crate (its `ModCrateInfo.txt`; `layer0\` the disc's files, `layer1\` the archive's, CRASH6\CRASH.BD's, by
+their paths; a crate one folder down, as a zip unpacks, is found too; one of another game, `Game=` not `CrashTS`, refused;
+`ModCrateSettings.txt`, Crate Mod Loader's settings of the game's code, doesn't apply), or a folder of files laid out as the
+disc's (`CRASH6\`, `FMV\`) and the archive's (`Levels\`, `Language\`, `Startup\`, `Extras\`). The mods folder's own files and
+folders of those names (`mods\Levels\Earth\Hub\beach.rm2`, as before 1.2.0) are one more mod, "the loose files". Names in any
+case. `mods.txt` in the settings folder keeps their order (the first wins where two have a file) and switches; a mod not in it
+comes first and on; it's written only when the player changes something. The mods are looked at once, when the disc image is
+open (`Mods::Scan`, system.cpp's OpenDiscImage), and the log says each (`[native] mods: NAME (on): a Mod Crate by ..., N disc
+files, N archive files (N new)`) and each file used. A mod's SLES_525.68, SYSTEM.CNF and CRASH6\SYS\ (the I/O processor's modules, run as the PS2 runs them) are never used (the program is the
+port's, the game's data read from the player's disc): the log says what its executable changes (code and data, in words and
+places, compared section by section). While any mod is on, the memory card is a folder of their own (`memorycard-mods-` and
+their names; the level select's `...-level-select` beside it), so the player's saves never meet a mod's levels.
+
+Importing (modimport.cpp): a zip or an `.iso` in the mods folder becomes a mod folder of its name, from Options > Mods >
+Import mods (a thread of its own, the dialog's bar) or `--import-mods` (the console says each step; its exit status how many
+failed). A zip is unpacked (TwinsanityEvolved's zip reader and inflate, NativeEE's MIT: modzip.h, modinflate.h; its one top
+folder left out when every file is in it; a name leading out of the folder skipped). A disc image (ISO 9660, 2048-byte
+sectors) is compared with the player's disc (`Disc::FindOriginal`: the image's own files, whatever the mods): each disc
+file kept whole in `layer0\` when it differs or the disc hasn't it, CRASH6\CRASH.BD entry by entry through both tables
+(by name: an archive whose entries moved still compares) into `layer1\`, with a ModCrateInfo.txt of its name, so the result
+is a Mod Crate. Each import is written in `.importing-NAME` and takes the mod's place only once whole; `imported.txt` (the
+source's name, size and date) marks it, so an unchanged source isn't offered again; a folder of that name not made by an
+import stops it. An xdelta, PPF or BPS patch isn't applied here (a patcher makes the image first). Options > Mods (the
+settings' sixth tab, settings.cpp's BuildMods): Import mods while there's something to; each mod a choice, off or on in its
+place ("on · 1", the first; moving one shifts the others; its row's label and description its own, in the overlay's
+Windows-1252 with the prompts' glyphs made plain characters, cut to one line); Open the mods folder. Changes are saved to
+mods.txt and used from the next start (the mods are looked at once: the session keeps the list it started with, the
+page's own list is apart). An import's end looks at the mods folder again (Mods::Refresh: the new mods first and on, as the
+next start would put them, mods.txt written) and makes the page's rows again, the selection on the first mod; a hidden
+row's selection steps to the line next to it (MoveRow). check_windows' "mods import" line: a Mod Crate's zip
+and a small changed image (one archive file changed, one the disc's own, a disc file the disc hasn't) imported, then played
+with both on (the first by name wins, the card of both) and with mods.txt turning one off.
+
+`CrashTwinsanity.exe --list-files` lists the archive's files and `--extract=PATH` copies one (or one of the disc's) into the
+mods folder to be changed (commands.cpp); `native/tools/iso_extract.py IMAGE [--archive] --list` and `iso_extract.py IMAGE
+[--archive] PATH OUT` do the same without the game.
+
+The disc.cpp side: a disc file's mod is given a place past 16 GB (a GB each, its sectors still 32 bit for the I/O processor).
+The archive's files' mods follow the archive's own data in a copy of it at 12 GB: while any mod has one, `CRASH6\CRASH.BD` is
+found there (its size the data's and the mods'), and `CRASH6\CRASH.BH`, the archive's table, is made again with their starts
+and sizes and the files they add (new levels: the game's own table is its list of files), as Crate Mod Loader rebuilds it
+for the PS2. Before 1.2.0 an archive file's mod was placed past the image's end and only FileStreamOpen knew it: the I/O
+processor's STREAM.IRX, which reads the sound banks, refuses an offset past the file's size it was given and reads on from
+where it was, so each sound bank of a mod's level came as the bank before it, cut to its first 3 KB (#36's garbled sounds;
+the "mods" line of check_windows puts the disc's own Default.rm2 and beach.rm2 in a mods folder and checks two of
+Default.rm2's banks' lengths). STREAM.IRX counts in signed 32 bits (a size of 0xffff0000 crashed it): the archive with its
+mods should stay under 2 GB, and the log says when it doesn't.
 
 ## Portable mode
 
@@ -342,7 +411,9 @@ filter's haze, NATIVE.md's "Draw distance"); with `--sweep`, every level
 chunk, its outcome
 against `native/sweep/results_windows.json` (a run that went on and one that ended in a game over count alike: the scripted
 input decides which). Some 5 minutes, 25 more with the sweep. Each run has a settings folder of its own; the disc image is
-local.json's. `--hints-shots FOLDER` runs only the hints' check, with a window, and saves the pause menu's pictures there;
+local.json's. The runs that open a window have the mouse and mouse look off (`without_mouse`: a window takes the focus, and a
+hand on the PC's mouse turned the SMAA run's camera in 1.2.0's first release check); the look and hints tests script the
+mouse headless. `--hints-shots FOLDER` runs only the hints' check, with a window, and saves the pause menu's pictures there;
 `--physics` only the physics' (a minute or so); `--scenarios` only the scenarios (two minutes or so); `--portable` only
 portable mode's (under a minute; the dialog's pictures in `build/native/check/portable/shots/`); `--fps-shots FOLDER` only the
 FPS counter's (its `FPS_CASES`, `$TWIN_FPS_TEST`, below: at 60 Hz, 50 Hz, 144 Hz without v-sync, and off; a minute or so), with
@@ -378,24 +449,76 @@ At the start, after the version's line (`Crash Twinsanity 1.0.19`: native/CMakeL
 - `threads:` the threads asked for: three by default, one with `$TWIN_RENDER_THREAD=0` (the one-thread .bat's).
 - `variables:` every `TWIN_` and `TWINSANITY_` variable set, with its value.
 - `mods:` the mods folder's files (their paths in it, the first 20, then how many more), or none.
+  Once the disc is open, a line each mod (on, off, refused; what it has), what its executable changes, the card its saves go on.
 - `texture pack:` on or off and whether there's a textures folder (once it's read, `texture pack: N replacement textures in`).
 - `the last session (log.previous.txt): VERSION for TIME, ...`: how the session before ended, from its log's end: its window
   closed (`quit`), another way out (`exit: ...`), an error (`fatal: ...`), a crash (`fatal exception ...`), a hang the hang watch
   saw with nothing after it, or no last line (closed from the Task Manager, a hang, the computer turned off). When the log goes
   to a terminal or a file, the settings folder's `log.txt` is the one read (the last start that wrote one).
 
-Then, as each is there: the disc image, FFmpeg's version, the graphics card (OpenGL's renderer and Windows' adapters, under
+Then, as each is there: the disc image and `disc:` what it is (below), FFmpeg's version, the graphics card (OpenGL's renderer and Windows' adapters, under
 "Debugging"), `display:` the screen the window is on (its number of the screens, its name as Windows has it, its desktop's size
 in pixels, refresh rate and scale, HDR on or off; "none" headless), `audio:` the device the sound goes to (SDL's name of it, a
 person's name in it left out: "Headphones (someone's AirPods)"; the driver, its rate, channels and buffer) or why there's none.
 
+The disc's line (discidentity.cpp, since 1.2.0) says what the image is, by its content, never its name: the program its
+SYSTEM.CNF boots (VER), whether that program's bytes are a retail one's (PAL 1.01's SLES_525.68, NTSC-U 2.00's SLUS_209.09, by
+their SHA-1), its size, and its CRC-32 and SHA-1 over the whole image against redump.org's dumps of the game (their disc pages,
+read 2026-11-06: PAL 1.01 disc 4514, NTSC-U 1.00 42680 and 2.00 13689, NTSC-J 1.00 26782, the two demo discs 35281 and 28365).
+`disc: the retail disc, SLES-52568 v1.01 PAL (Europe, Australia): its size, CRC-32 9055a7bc and SHA-1 are redump.org's disc
+4514`; `a modified copy of the PAL 1.01 disc: ... the image isn't one of redump.org's dumps (2,579,234,816 bytes; redump.org's
+disc 4514 has 2,558,263,296)` (a translation, a mod built into the ISO); `an unknown image: ...`. Only an image with a dump's size
+is hashed (otherwise it can't be one), once: on a thread of its own in Windows' background mode (its processor and disc
+priority below the game's; some 5 s for the PAL image here), its line logged when it's done (`(checked in 5.4 s)`), the hashes
+kept in the settings folder's `disc_identity.txt` by the image's size and date, so later starts say `(checked before)`. Runs
+with `--headless` (the checks) don't hash. An image the game refuses (another release) gets a line too: its program, its size
+and the dumps of that size. `--identify-disc` recognises the disc image given (`--iso`, ...) there and then, hashing it, and
+exits. The CRC-32 and SHA-1 code is TwinsanityEvolved's engine's (NativeEE, MIT: discimagehash.cpp, its notice kept;
+native/third_party/twinsanityevolved).
+
+`languages:` (languages.cpp, 1.2.0) says whether each text bank is in the language its name says (a bank's first lines against
+TwinsanityEvolved's words of each language, languageprobes.h) and which language the voices are in.
+
+`update check:` lines come only with the option on (updatecheck.cpp: the request's answer, "nothing newer", the newer version
+and its page, or why there was no answer); `$TWIN_UPDATE_TEST=FILE` reads FILE as GitHub's answer, so the checks never use the
+network.
+
 While it runs, besides the game's trail (under "Debugging"): `game: LEVEL loaded in N s` for each loading (the title's and a
 level's, from the loading state to the next), and `performance:` a line a minute of play (play and the cutscenes, not the menus,
 the pause, the loadings or the movies): the frames a second, the slowest frame, a frame's work on each thread (the game's own
-and its waits for the others, VU1's, the render thread's; with fewer threads, which one has VU1 and the GS), the graphics card's
-own time a frame, and the player's chunk. The threads' counters are those they keep anyway (graphics/display.cpp's game work,
-renderthread.cpp's busy and wait times), a clock read and a few sums a frame: nothing is profiled.
-`$TWIN_PERFORMANCE_EVERY=SECONDS` sets the minute (the check's 10).
+and its waits for the others, the window's present, VU1's, the render thread's; with fewer threads, which one has VU1 and the
+GS), the graphics card's own time a frame, and the player's chunk. The threads' counters are those they keep anyway
+(graphics/display.cpp's game work, renderthread.cpp's busy and wait times), a clock read and a few sums a frame: nothing is
+profiled. `$TWIN_PERFORMANCE_EVERY=SECONDS` sets the minute (the check's 10).
+
+Since 1.2.0 the render thread's time is split (graphics/renderwork.cpp): `the render thread 10.7 ms (the GS 6.1, OpenGL 3.2,
+waiting for the card 0.4, the picture handed over 1.0)`. The GS is its emulation on the processor (the GIF's data, the hardware
+renderer's work deciding what to draw; with `$TWIN_RENDER_THREAD=vif` VIF1 and VU1 too), OpenGL the time inside OpenGL's calls
+the GS emulation makes (the driver's work: every entry point of hw/gl.cpp is counted), waiting for the card the pictures and GS
+memory read back (`glReadPixels`, `glFinish`: the thread stops until the card has drawn them), the picture handed over the
+frame's picture copied into the slot the window shows it from, and its wait for the window to have drawn the slot before. The
+GS's share is what's left of the render thread's time once the others are taken out. Each change is counted with the
+processor's time stamp counter (`rdtsc`, a few nanoseconds; twice an OpenGL call), turned into
+nanoseconds against the steady clock over the render thread's first 2 s. The window's present (`the window's present 1.2 ms`)
+is the game's thread's: the window's context drawing the picture and the UI over it and its swap (with vsync, the swap waits
+for the screen's refresh); since 1.2.0 it's taken out of the game's own time (1.1.0's "the game" had it in). A PC whose present
+takes long (a picture crossing from one graphics card to another, two screens on two adapters) shows it there; one whose driver
+is slow, in OpenGL; one whose processor is slow, in the GS.
+
+Since 1.2.0 a frame of play over 50 ms gets a line of its own (at most 10 a minute of play, the rest counted in the next):
+`slow frame: 180 ms in levels\earth\hub\huba; the game 150.2 ms (its loading 140.0 ms, of it the chunks' 138.5 ms, their
+longest step 120.3 ms; reading the disc 2.1 ms) and 3.0 ms waiting, the window's present 1.1 ms; the render thread 20.4 ms (the
+GS 12.0, OpenGL 7.2 with 2 shader programs made in 5.0 ms, waiting for the card 0.1, the picture handed over 1.1)`. The game's
+loading is its background work while it plays (game/context.cpp's BackgroundWork: the chunks' loaders and readers, the
+instances destroyed, the resources' steps, the disk pool's compaction), the chunks' share and their longest step
+(chunkloading.cpp's UpdateChunkLoading: a reader handing over a file's section is one), reading the disc the game's reads of the
+image (stream.cpp: synchronous, a slow drive's seeks show here), the shader programs the hardware renderer's new combinations of
+the GS's states compiled and linked the first time they're drawn (hwgs.cpp's ProgramFor: OpenGL's driver work). The render
+thread's numbers are its work in the same time (it draws the frame before). `$TWIN_SLOW_FRAME_MS` sets the 50 (a fast PC's
+measures). After each performance line, when the hardware renderer made shader programs since the last (a first start, an
+option drawing new combinations): `graphics: 3 shader programs made since, 45.2 ms in all, the longest 18.1 ms`; at its start,
+`graphics: 31 shader programs made at the start in 180 ms (25 listed in shaders.txt, 31 this version's own)`. THE LIST 19's
+hitches (#23, #32) were measured with these; "Hitches" under "Speed" has what they were.
 
 The graphics card's time (graphics/gputime.cpp) tells a render thread slow on the processor from one waiting on the card: the
 render thread's own time has the driver's work in it, and its waits for the card (a picture read back, a full queue), so 25 ms
@@ -414,8 +537,16 @@ the beach's some 250 calls a frame, every frame, cost the render thread 0.4-0.5 
 144 Hz); a frame in 8, flushed, costs nothing seen (70.1 fps and 14.3 ms against 1.0.19's 70.0 and 14.3, three runs each,
 alternated), and the minute's line still averages over 400 timed frames. The log says it once at the start, `graphics: the
 card's time measured by OpenGL's timer queries (64 bits), a frame in 8`; `unknown` (with a line saying why) when the driver
-has no timer entry points or no bits (`GL_QUERY_COUNTER_BITS` 0), its results never come (8192 waiting), or
-`$TWIN_GPU_TIME=0` (which leaves the entry points as they are: for measuring the timing's own cost). Measured on the beach in
+has no timer entry points or no bits (`GL_QUERY_COUNTER_BITS` 0), its results never come (8192 waiting: the line says how
+old the oldest is, the frames read with another context current and the queries left out), or `$TWIN_GPU_TIME=0` (which
+leaves the entry points as they are: for measuring the timing's own cost). The results are read in their order, so one that
+never comes held back every one after it: #32's log at 3x and 144 Hz had 8219 waiting 4 s into the title, the user's at 8x
+with SSAA 8357, and the card's time was unknown for the rest of the session (1.1.0). Since 1.2.0 a query whose result isn't
+there 120 frames after it was begun, while the next one's is, is left out (`graphics: a timer query's result not there N
+frames after it was begun, the next one's there: left out`, once a thread), and none is begun on a frame its thread ends with
+another context current (its results couldn't be read). The cause wasn't reproduced here (a query whose begin the driver
+refused is the likeliest: its result never comes); `$TWIN_GPU_TIME_TEST=stuck` makes each thread's first query one such, and
+the log's check has it. Measured on the beach in
 a 1280x720 window at 144 Hz (RTX 4070 SUPER): at 4x the render thread 14 ms a frame, the card 2.2 ms; at 1x with one thread,
 the game's thread 28 ms, the card 1.1 ms. Without a window (the checks) the card's time reads higher (2.2 ms at 1x against
 1.1): an idle card's lower clocks, most likely.
@@ -484,6 +615,10 @@ with `\` throughout (Native::LogPath: the texture pack's, the fonts', the mods',
   Levels\Earth\Hub\bossarea` with `500-800:ly=0`. With the pictures above, a real run (a window or fullscreen, three threads) is
   the same place every time: a bug seen there is measured in the window as shown and in the picture drawn at once.
 - `$TWIN_FRAME_STATS`: each frame's time, VU1's work, the primitives, the render thread's time and the GPU renderer's batches, texture decodes, uploads, downloads and copies.
+- `$TWIN_HW_SOURCE_TRACE=1`: each kind of texture the hardware renderer samples straight from a target (a buffer it drew)
+  rather than decoding it from memory, logged once ("graphics: a 256x256 texture at 2800/4 (psm 0) read from the target ...");
+  `$TWIN_HW_NO_TARGET_TEXTURES=1`: none, every texture decoded from memory's copy (an effect's buffer then at the PS2's
+  resolution): to tell that way's drawing from the decoder's (GRAPHICS.md, "Ant Agony's walls and doors").
 - `$TWIN_RENDER_DISTANCE=far`: the draw distance's far plane its choice's even where the colour filter reads the depth
   (renderdistance.h, NATIVE.md's "Draw distance"): to see what it would change. The log's "render distance: the far plane Nx"
   lines say when the far plane moves.
@@ -518,7 +653,10 @@ with `\` throughout (Native::LogPath: the texture pack's, the fonts', the mods',
   (`$TWIN_TEST_SOUND_DELAY`: from so many seconds).
 - The level sweep's tools for places it can't start in or reach: `$TWIN_HOP=cryscave,escape` takes the player through its
   chunk's link to each of those chunks in turn, as the game's WarpToChunkLinkTowardsPlayer places an instance (half a unit in
-  front of the link's load wall, where the link takes it). Other steps: `goto:X:Y:Z` puts the player there (its physics then
+  front of the link's load wall, where the link takes it; each chunk's links are logged as the player enters it, with their
+  walls' middles, a `fly` step's way through). Other steps: `load:Levels\AltEarth\Core\corea` loads that chunk as
+  `$TWIN_START_CHUNK` does, the chunks played before staying the renderer's history (check_windows.py's Ant Agony scenario:
+  bossarea's sky, then corea); `goto:X:Y:Z` puts the player there (its physics then
   move it from its last place: a wall on a long way stops it, a gap drops it); `fly:X:Y:Z[:SPEED]` takes it there in a straight
   line, a little further each frame (10 units a second), so it doesn't fall on the way and the chunk's triggers and links see it
   go by: a cutscene it starts plays, a link takes it into the next chunk (the flight ends there, or when the player is another),
@@ -527,7 +665,7 @@ with `\` throughout (Native::LogPath: the texture pack's, the fonts', the mods',
   move); `objects` logs the
   instances of its chunk (their objects' names and places); `on:mine` puts it 2 units above the nearest instance whose
   object's name holds "mine" (`on:mine:5`: 5 units) and `bring:mine` puts that instance where the player is instead; `idle`
-  stops the scripted input and `input` starts it again; `wait5` waits 5 s; `die` drops it to its death; `scripts:director`
+  stops the scripted input and `input` starts it again; `wait5` waits 5 s; `die` drops it to its death; `mask` gives it a mask as an Aku Aku crate does (the fourth in a row makes it invincible); with `$TWIN_SWEEP_GAME_TIME=1` the steps' waits and flights go by the game clock instead of real time, so a run with `$TWIN_FIXED_TIME=1` and `$TWINSANITY_AUDIO=frames` makes the same pictures every time (two builds', or two switches', compared frame by frame); `$TWIN_NO_SHADOWS` leaves the characters' shadows out, to compare what they darken; `scripts:director`
   logs the behaviour scripts of the instances whose object's name holds "director" (each runner's graphs, the state they're in,
   every state's bodies: condition, commands, jump) and `state:GRAPH:3` makes the runner that runs a graph whose name holds GRAPH
   jump to its state 3, as a body's jump would (a boss beaten without playing it: check_windows.py's Dingodile). Down a slide (Slip
@@ -552,8 +690,17 @@ with `\` throughout (Native::LogPath: the texture pack's, the fonts', the mods',
 - `$TWIN_SCENE_STATE` (ui/sweep.cpp, with the sweep): what a cutscene leaves behind, 1.5 s into the play after it
   (`=SECONDS`: that long): the player's locked inputs (`ffffffff` all), place and behaviours (each runner's levels' graphs and
   states), every instance whose object node takes its object from another's (an actor a scene didn't give back), every instance
-  running a scene's graph (CUTSCENE or _CS in its name). A scene played out against the same skipped tells what the skip leaves
-  undone; the angry skunk, played out, matches the PS2 game's memory after it (PCSX2 below).
+  running a scene's graph (CUTSCENE or _CS in its name), and every agent of the last cutscene (cutsceneskip.cpp's: where it is,
+  whether it's drawn, its runners); twice, the second a second after the first, both counted in game frames (60 a second, so two
+  runs with `$TWIN_FIXED_TIME` take them at the same frame). A scene played out against the same skipped tells what the skip
+  leaves undone; the angry skunk, played out, matches the PS2 game's memory after it (PCSX2 below).
+- The cutscene skip's checks (cutsceneskip.cpp, NATIVE.md "The waits' skip"): `$TWIN_SKIP_ALL_SCENES=1` lets the waits' skip end
+  every cutscene, checked or not; `$TWIN_SKIP_WAITS_FIRST=1` makes it go first where a skip rule is polled too; `$TWIN_HOP`'s
+  `tell:NAME` (or `tell:NAME:MESSAGE`) sends user message MESSAGE (87) to the instances of the player's chunk whose object's name
+  holds NAME, as a trigger tells them (a cutscene's director started where a test can't walk to its trigger).
+  `native/tools/check_cutscene_skips.py [NAME...] [--waits]` plays each cutscene of its list watched and skipped (and skipped by
+  the waits) from the same start and compares what each leaves; its runs' folders and settings are absolute paths, and each run
+  is given the disc image (`$TWIN_TEST_PICK`), so a missed settings folder can't open the disc image dialog.
 - `$TWIN_SCRIPT_DUMP=6147,6149` (or `all`; levelrecipes.cpp): those behaviour scripts logged as the game reads them and as the
   level recipes edit them: each state (the start marked, its bits: the child script in the top half), each body's condition (its
   ID and parameter, ! inverted, its interval) and jump, each command's ID and argument words. commands.h and conditions.h name the
@@ -716,7 +863,7 @@ commands' pair never does).
 
 In a clone of the public repository with no changes of its own (a new script in native/tools aside):
 
-    .venv\Scripts\python.exe native\tools\release_windows.py check [--sweep]
+    .venv\Scripts\python.exe native\tools\release_windows.py check [--sweep] [--no-linux]
     .venv\Scripts\python.exe native\tools\release_windows.py publish NOTES.md [--preview]
 
 `check` pulls (and runs again when that brought a commit, so its checks are the pulled commit's), builds afresh
@@ -727,11 +874,18 @@ them: the DLLs keep their authors'); nothing of a player's (portable.txt, a User
 check_windows.py's checks, with the pictures compared with the last release's program; and that the program has no 32-byte block
 of the game executable's data or VU microcode the last release's didn't (version 1.0.5 has 23 of the 3,832 that aren't
 repetitive, none of the microcode: runs of small integers, the standard library's tables, powers of ten and digits, and file
-names the decompilation's C++ spells out). It prints the commit and the zip's SHA-256. `publish` makes the release (`vVERSION`;
-with `--preview` a preview, GitHub's pre-release, as every release before 1.0.8 was) from NOTES.md with `{commit}` and
-`{sha256}` filled in, opens its discussion (Discussions > Announcements, where players can talk about it), uploads the zip,
-downloads it back and compares its SHA-256: only with the commit and the zip `check` checked, once that commit is on GitHub.
-GitHub's token is git's (`git credential fill`), never printed or kept.
+names the decompilation's C++ spells out). Then, since 1.2.0, the Linux AppImage (native/LINUX.md, "In Docker"; Docker
+Desktop has to be running): built afresh in Docker (`build_linux_docker.py --configure`) and checked there
+(`check_linux.py`: it holds SDL3 and FFmpeg's two libraries and loads nothing else but what every Linux has, the glibc it needs,
+its licences (the MIT code's in the program too), its version, and the beach played from it for 20 seconds, headless on Xvfb
+with Mesa, the disc image mounted read-only), its
+program searched for the game's blocks as the zip's is (none the Windows program of the same commit or the last release's
+hasn't). Its lines start with `linux`; `--no-linux` releases the zip alone, when Docker isn't there. It prints the commit and
+both files' SHA-256. `publish` makes the release (`vVERSION`; with `--preview` a preview, GitHub's pre-release, as every
+release before 1.0.8 was) from NOTES.md with `{commit}`, `{sha256}` (the zip's) and `{sha256_linux}` (the AppImage's) filled
+in, opens its discussion (Discussions > Announcements, where players can talk about it), uploads the zip and the AppImage,
+downloads them back and compares their SHA-256: only with the commit and the files `check` checked, once that commit is on
+GitHub. GitHub's token is git's (`git credential fill`), never printed or kept.
 
 No commit has the game's files: `native/tools/check_game_data.py` refuses the executable, the disc's and the archive's files,
 disc images, splat's output, texture packs and PCSX2's states, cards and BIOS, by name, folder, first bytes or size. The

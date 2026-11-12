@@ -2,10 +2,12 @@
 // code, the resolution setting's choices and file) and --dump-texts (every line of every language's text files as the native build
 // has them, the PC wording applied)
 #include "ui/pctext.h"
+#include "ui/settingsmodel.h"
 #include "ui/bindings.h"
 #include "ui/overlayinternal.h"
 
 #include "native.h"
+#include "mods.h"
 
 #include "game/clock.h"
 #include "game/controllers.h"
@@ -611,10 +613,16 @@ void TestResolution()
     Check(DisplayChoice({1, 1280, 960, false}) == TextWindow1280 - TextWindow960, "1280x960's choice");
     Check(DisplayChoice({1, 1000, 740, false}) == 0, "a window resized by hand: the nearest");
     Check(DisplayChoice({1, 1280, 960, true}) == DisplayChoices - 1, "fullscreen's choice");
-    // The defaults: 2x in a 1280 x 720 window, one of the menu's choices
-    Check(DefaultResolution().scale == 2 && !DefaultResolution().fullscreen &&
-              DisplayChoice(DefaultResolution()) == TextWindow1280Wide - TextWindow960,
+    // The defaults: 2x in a 1280 x 720 window, one of the menu's choices; a Steam Deck's fullscreen (its 1280 x 800 screen), 2x,
+    // the same window when it's made windowed
+    Check(DefaultResolutionFor(false).scale == 2 && !DefaultResolutionFor(false).fullscreen &&
+              DisplayChoice(DefaultResolutionFor(false)) == TextWindow1280Wide - TextWindow960,
           "the defaults: 2x, a 1280x720 window");
+    Check(DefaultResolutionFor(true).scale == 2 && DefaultResolutionFor(true).fullscreen &&
+              DisplayChoice(DefaultResolutionFor(true)) == DisplayChoices - 1 &&
+              DefaultResolutionFor(true).windowWidth == 1280 && DefaultResolutionFor(true).windowHeight == 720,
+          "a Steam Deck's defaults: 2x, fullscreen");
+    Check(DefaultResolution().fullscreen == (Native::SteamDeckModel() != nullptr), "this computer's defaults");
 
     // The page's choices applied only when the player changes them
     NoteChoices(1, 2);
@@ -826,6 +834,41 @@ void TestControls()
 
 // The FPS counter: nothing shown with the option off or before its first half second, the frames a second of pictures shown at
 // 50, 59.94, 144 and 60 a second, and drawn in the window's own top left corner whatever the window's shape
+// Each settings row's description one line on the screen in every language (the view draws it from x 360, no wrapping)
+void TestDescriptions()
+{
+    u32 measured = 0;
+    f32 widest = 0.0f;
+    for (u32 page = 0; page < TabCount; page++)
+    {
+        for (const Row& row : SettingsRows(page))
+        {
+            for (u32 i = 0; i < g_NativeTextCount; i++)
+            {
+                if (row.description == 0 || g_NativeTexts[i].text != row.description)
+                {
+                    continue;
+                }
+
+                for (u32 language = 0; language < TextLanguages; language++)
+                {
+                    std::string text;
+                    ToGameText(g_NativeTexts[i].languages[language], &text);
+                    const f32 width = DescriptionWidth(text);
+                    widest = std::max(widest, width);
+                    Check(width > 0.0f && width <= DescriptionRoom, "description 0x%X in %s: %.0f of %.0f pixels", row.description,
+                          g_TextLanguages[language], width, DescriptionRoom);
+                    measured++;
+                }
+            }
+        }
+    }
+
+    Check(measured > 0, "descriptions measured: %u", measured);
+    Native::Log("ui self-test: %u settings descriptions in their languages one line each, the widest %.0f of %.0f pixels", measured,
+                widest, DescriptionRoom);
+}
+
 void TestFpsCounter()
 {
     SetOptionSaving(false);
@@ -1020,6 +1063,14 @@ bool RunCommand(const char* argument, int* status)
         return true;
     }
 
+    // The mods folder's zips and disc images imported into mod folders (modimport.cpp), with the disc image the game would use
+    if (command == "--import-mods")
+    {
+        Native::OpenDiscImage();
+        *status = Native::Mods::ImportAll();
+        return true;
+    }
+
     if (command == "--dump-button-art")
     {
         const char* folder = std::getenv("TWIN_UI_ART_OUT");
@@ -1033,6 +1084,22 @@ bool RunCommand(const char* argument, int* status)
         return true;
     }
 
+    // The disc image (--iso, $TWINSANITY_ISO or local.json's) recognised there and then, hashed (discidentity.cpp)
+    if (command == "--identify-disc")
+    {
+        const char* image = Native::GetSettings().discImage;
+        if (image == nullptr || !Native::Disc::Open(image))
+        {
+            Native::Log("no disc image to recognise (--iso, $TWINSANITY_ISO or local.json's disc_image)");
+            *status = 1;
+            return true;
+        }
+
+        Native::IdentifyDisc(image, Native::DiscHashing::Wait);
+        *status = 0;
+        return true;
+    }
+
     if (command == "--selftest-ui")
     {
         TestTexts();
@@ -1040,6 +1107,7 @@ bool RunCommand(const char* argument, int* status)
         TestResolution();
         TestControls();
         TestFpsCounter();
+        TestDescriptions();
         Native::Log("ui self-test: %s", g_Failures == 0 ? "passed" : "FAILED");
         *status = g_Failures == 0 ? 0 : 1;
         return true;

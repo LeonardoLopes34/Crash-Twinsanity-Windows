@@ -15,6 +15,50 @@
 
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
+#include <cstdlib>
+
+#include "gameoptions.h"
+#include "game/agents.h"
+#include "game/characters.h"
+#include "game/gamecontroller.h"
+
+namespace
+{
+// The drop shadow (the game option, THE LIST 14, #11, #35): a round shadow (a cylinder's volume, as the game's own circles) straight
+// down under the played character while it's off the ground, reaching DropReach below it (the game's own shadows' length): the
+// spot it will land on, whatever the lighting's slant the character's own shadow follows; drawn as the game's shadows are (on the
+// surfaces that take shadows: the shadows on crates option adds the crates' tops)
+constexpr f32 DropRadius = 0.5f;
+constexpr f32 DropReach = 20.0f;
+
+void CastDropShadow(InstanceContext* instance)
+{
+    GameController* controller = G_GameController;
+    if (!NativeGame::DropShadow() || controller == nullptr || instance == nullptr || instance->chunk == nullptr ||
+        instance != controller->progress.Instance(controller->progress.play.character))
+    {
+        return;
+    }
+
+    CharacterAgent* agent = CharacterAgentOf(instance);
+    ChunkShadows* shadows = instance->chunk->shadows;
+    if (agent == nullptr || shadows == nullptr || static_cast<CharacterPart*>(agent->part)->flags.onGround != 0)
+    {
+        return;
+    }
+
+    ObjectPlace* place = instance->place;
+    RotateAndTranslate(place);
+    const f32 offset[3] = {0.0f, 0.0f, 0.0f};
+    f32 size[4] = {DropRadius, DropReach, DropRadius, 1.0f};
+    ShadowEntry* entry = shadows->Add(ShadowCylinder, offset, size);
+    if (entry != nullptr)
+    {
+        InitIdentityMatrix(&entry->frame);
+        *RowOf(&entry->frame, 3) = *RowOf(&place->matrix, 3);
+    }
+}
+}
 #endif
 
 extern "C"
@@ -339,6 +383,9 @@ void ShadowNode::SetSlot(u32 slot, ShadowSlot* shadow)
 u32 ShadowNode::Update(TimeClock* clock)
 {
     InstanceContext* instance = owner;
+#ifdef TWIN_NATIVE
+    CastDropShadow(instance);
+#endif
     ReferencedObjectFlags flags = instance->flags;
 #ifdef TWIN_NATIVE
     // Two players: cast for either camera's drawing
@@ -643,6 +690,14 @@ void ChunkShadows::Swap()
 
 void ChunkShadows::Draw(const Vector4* planes, const Matrix4x4*, const Matrix4x4* view)
 {
+#ifdef TWIN_NATIVE
+    // $TWIN_NO_SHADOWS: the characters' shadows not drawn, for a test's comparison of what they darken (THE LIST 39)
+    static const bool noShadows = std::getenv("TWIN_NO_SHADOWS") != nullptr;
+    if (noShadows)
+    {
+        return;
+    }
+#endif
     Matrix4x4 frame;
     InitIdentityMatrix(&frame);
     for (u32 index = 0; index < *currentCount; index++)

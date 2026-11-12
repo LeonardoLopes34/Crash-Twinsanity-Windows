@@ -15,6 +15,7 @@ FOLDER only the FPS counter's, with a window (the counter counts the pictures sh
 """
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -22,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -39,16 +41,17 @@ SCENARIOS = [
     ("Dingodile beaten, the boiler room's lock and the Academy (1.0.7)", "Levels\\school\\Boiler\\boiler_6", 65,
      "wait20,state:dingodile_bossfight_director_activated:3,wait12,boil2lck,wait5,sch_hub,wait8"),
     # Issue #9: the angry skunk's scene skipped, then the skunk attacked at once, while it still plays the scene's behaviour (left
-    # taking its object from the scene's director it was drawn as Crash, or crashed on an "OGI" read past the director's models)
+    # taking its object from the scene's director it was drawn as Crash, or crashed on an "OGI" read past the director's models).
+    # Since THE LIST 28 the scene's skip is the waits' (cutsceneskip.cpp: its rule's left the skunk the director's for a while)
     ("The skunk's scene skipped, the skunk attacked at once (#9)", "Levels\\Earth\\Hub\\highpath", 30,
      "idle,goto:-9:-4:-50,input,on:skunk:0,wait3,on:skunk:0,wait3,on:skunk:0,wait3",
      dict(SKIPPING, env={"TWIN_SKIP_TEST": "0.2"},
-          expect=[r"skip: .*COM_ANGRY_SKUNK_CUSCENE_MAIN skipped: .*given back as they finish: .*act_GLOBAL_SKUNK"])),
+          expect=[r"cutscene skip: skipped, \d+ agents: .*act_GLOBAL_SKUNK"])),
     # ... and given back its own object once it's done (the training scene before it too: Coco's creature, Crash), as the scene
     # played out leaves them
     ("The skunk's scene skipped, the skunk given back (#9)", "Levels\\Earth\\Hub\\highpath", 30, "idle,goto:-9:-4:-50,wait15",
      dict(SKIPPING, env={"TWIN_SKIP_TEST": "0.2", "TWIN_SCENE_STATE": "10"},
-          expect=[r"skip: .* after the skip, actors given their own object back: .*act_GLOBAL_SKUNK",
+          expect=[r"cutscene skip: skipped, \d+ agents: .*act_GLOBAL_SKUNK",
                   r"scene state: the player \|Highpath\|act_CRASH, inputs locked 00000000"],
           forbid=[r"scene state: .* takes its object from", r"inputs locked ffffffff"])),
     # Issue #9: Cortex chased by the bear (Doc Amok), the scene skipped: the controls stayed locked
@@ -60,22 +63,23 @@ SCENARIOS = [
     # Issue #9: Rooftop Rampage's scene in roofcor2 skipped as a player reaches it, as Nina (flown through the bus chase from its
     # start, into roofcor2 by its link): the scene makes Cortex the player, whose idle after it was the director's slot, Nina's
     # scene behaviour, which left him driven by its animations, unable to move (started in roofcor2 he's the player already); and
-    # its drones, the director's linked objects, never got the scene's messages that send them at Cortex
+    # its drones, the director's linked objects, never got the scene's messages that send them at Cortex. Since THE LIST 28 the
+    # scene's skip is the waits' (the rooftop director's scenes: its rule left the blimp shown in roof01): the scene's own
+    # messages reach the drones (among the skip's agents) and its own switch makes Cortex the player
     ("Rooftop Rampage's scene skipped arriving as Nina, Cortex moves (#9)", "Levels\\school\\RoofTop\\buschase", 80,
      "idle,wait2,fly:1.2:-3:160:25,fly:11:-3:167:25,fly:26.6:-4:168.5:15,wait2,fly:37.6:-0.5:47:10,roofcor2,wait3,"
      "fly:-9:-1:1:10,fly:5.5:-1:0:5,input,wait3,moved:2",
      dict(SKIPPING, env={"TWIN_SKIP_TEST": "0.2", "TWIN_SCENE_STATE": "3", "TWIN_TRIGGER_PLAN": "list"},
-          expect=[r"skip: .*COM_CUTSCENE_H03D skipped: .*messages [\d, ]*287 to its linked objects, .*the character switched as "
-                  r"it ends; .*\|BusChase\|act_NINA1",
-                  r"\|RoofCor2\|act_CORTEX asked for its slot 12, given its own object back: its own COM_CORTEX_IDLE",
+          expect=[r"cutscene skip: skipped, \d+ agents: \|RoofCor2\|CutsceneH03D\|act_ROOFTOP_CUTSCENE_DIRECTOR .*act_DRONE",
                   r"scene state: the player \|RoofCor2\|act_CORTEX, inputs locked 00000000",
                   r"hop: the player \S+act_CORTEX moved [\d.]+ units since the last step, at least"])),
     # Issue #9: the Academy hub's first scene skipped (its triggers stepped into): its staircase, the director's linked object,
-    # never got the scene's message that extends it, so the Boiler Room couldn't be reached
+    # never got the scene's message that extends it, so the Boiler Room couldn't be reached. Since THE LIST 28 the scene's skip
+    # is the waits': the scene's own message reaches it (the staircase among the skip's agents)
     ("The Academy's first scene skipped, its staircase extended (#9)", "Levels\\school\\Sch_Hub\\sch_hub", 45,
      "idle,wait40,scripts:staircase",
      dict(SKIPPING, env={"TWIN_SKIP_TEST": "1", "TWIN_TRIGGER_PLAN": "0,1", "TWIN_TRIGGER_EVERY": "14"},
-          expect=[r"skip: .*COM_SCHOOL_HUB_CUTSCENE_H03A skipped: .*messages 4 to its linked objects",
+          expect=[r"cutscene skip: skipped, \d+ agents: .*act_EXTENDING_SPIRAL_STAIRCASE",
                   r"act_EXTENDING_SPIRAL_STAIRCASE's runner 0"])),
     # Issue #19: the options' 6x and 8x drawn by the hardware renderer whole (its targets fit this PC's graphics card); and a
     # target the card can't hold ($TWIN_HW_MAX_TARGET makes the 4x frame one) drawn by the software GS instead (HAB3X's 148af1e)
@@ -90,6 +94,36 @@ SCENARIOS = [
      dict(env={"TWIN_SCALE": "4", "TWIN_HW_MAX_TARGET": "1024"},
           expect=[r"hardware renderer: drawing at 4x", r"the target \w+/8 class \d+ \(2048x\d+ at the scale\) can't be drawn into",
                   r"left to the software GS: a target the graphics card can't hold at this scale"])),
+    # Issue #18 (THE LIST 15): the masks' invincibility trails taken into the next chunk with the player under Bug fixes (retail
+    # leaves their emitters in the chunk they started in, past their cut-off: the particles stop, the mask still on)
+    ("The mask's invincibility trails into another chunk (#18)", "Levels\\Earth\\Hub\\huba", 22,
+     "idle,wait3,mask,wait1,mask,wait1,mask,wait1,mask,wait2,hubb,wait4",
+     dict(options="skip_cutscenes=1\nretail_fixes=1\n", env={"TWIN_MASK_TRACE": "1"},
+          expect=[r"mask trace: trail 0, emitter \d+ taken, .*enabled 1, .*its chunk levels\\earth\\hub\\hubb, the player's "
+                  r"levels\\earth\\hub\\hubb"])),
+    # Issue #18 (THE LIST 15): with two masks, the stars put back on Aku Aku after a cutscene under Bug fixes (retail hides the
+    # mask while the game is watched, destroying its boost trail, and shows it again without: on the PS2 too). The skunk's scene
+    # on the high path, a mask given before it (the sweep's start has one)
+    ("The two masks' stars back after a cutscene (#18)", "Levels\\Earth\\Hub\\highpath", 40, "idle,mask,wait3,goto:-9:-4:-50,wait30",
+     dict(options="retail_fixes=1\n", env={"TWIN_MASK_TRACE": "1"},
+          expect=[r"mask trace: shown again after the game was watched, state 4, its stars on"], forbid=[r"its stars off"])),
+    # THE LIST 37: Bandicoot Pursuit's Evil Crash, whose first route step taken straight ahead misses it, stands for good (on the
+    # PS2 too); under Bug fixes the step itself is his target and he follows Cortex (Crash put on the checkpoint crate, then the pad)
+    ("Bandicoot Pursuit's Evil Crash follows Cortex under Bug fixes", "Levels\\AltEarth\\Hub\\altdoc", 14,
+     "idle,wait2,goto:75.3:2.6:-100.8,wait2,goto:62.49:1.6:-100.8,wait4,objects",
+     dict(options="skip_cutscenes=1\nretail_fixes=1\n", env={"TWIN_ROUTE_TRACE": "1", "TWIN_SWEEP_GAME_TIME": "1"},
+          expect=[r"route trace: \S*EVILCRASH, step 1 .*the step itself taken \(bug fixes\)",
+                  r"hop:   \S*EVILCRASH at \((4\d|5\d|6[0-5])\."])),
+    # Issue #32 (THE LIST 16): Ant Agony's walls and doors, 32 bit textures uploaded to 2800/4 each frame, were read from the
+    # buffer bossarea's sky is drawn into there (a target of that address and width left from earlier play), its clamped edge
+    # streaking their repeats; only a target's own drawing is a texture's source now (hwgs.cpp: Target::drawn). bossarea
+    # first, then corea loaded in the same run (the hop's load step): the sky still read from its buffer, the walls never
+    ("Ant Agony's walls after bossarea's sky, not read from its buffer (#32)", "Levels\\Earth\\Hub\\bossarea", 30,
+     "idle,wait5,load:Levels\\AltEarth\\Core\\corea,wait10",
+     dict(env={"TWIN_HW_SOURCE_TRACE": "1", "TWIN_SWEEP_GAME_TIME": "1"},
+          expect=[r"a 1024x1024 texture at 2800/4 \(psm 0\) read from the target 2800/4 \(psm 0",
+                  r"game: the player in levels\\altearth\\core\\corea"],
+          forbid=[r"a 256x\d+ texture at 2800/4 \(psm 0\) read from the target"])),
 ]
 # The pause menu's hints checked for each controller's prompts and the menu hints option (hintstest.cpp): the prompts' style
 # ($TWIN_UI_PROMPTS) and the option (options.txt's menu_hints: 0 the game's own hints, 1 the bar). The pause on the window's focus
@@ -120,7 +154,8 @@ PORTABLE_DATA = {"options.txt": (b"# a test's\nshow_fps=1\npause_on_focus_loss=0
 # The log a player's start writes (sessionlog.cpp; native/WINDOWS.md, "The log"), started as Explorer starts it (its own log.txt
 # in the settings folder): the last session's log a 1.0.18 one that crashed, a path in the profile folder in its last line; a mod,
 # a few options. What the start's log must have (regular expressions, in its order), played on the beach for LOG_SECONDS with a
-# performance line every 10 s of play (the graphics card's time in it: the render thread's context times it, a hidden window's);
+# performance line every 10 s of play (the graphics card's time in it: the render thread's context times it, a hidden window's;
+# each thread's first timer query made one whose result never comes, $TWIN_GPU_TIME_TEST=stuck, the time known all the same);
 # then a start that ends on an error (a disc image that isn't there), its last lines; then the settings screen driven from the
 # main menu through changes ($TWIN_SETTINGS_LOG_TEST: settingsshots.cpp), each logged once as it was left, with a settings folder
 # of its own (LOG_SETTINGS_OPTIONS), and no other change line (LOG_SETTINGS_CHANGES of them)
@@ -146,11 +181,21 @@ LOG_START = [
     r"\] texture pack: on, none installed",
     r"\] the last session \(log\.previous\.txt\): 1\.0\.18 for 13 min 33 s, ended in a crash: \"fatal exception 0xc0000005 .*"
     r"in %USERPROFILE%\\x\"",
+    # (what the image is: its program and size; not hashed headless)
+    r"\] disc: SLES_525\.68 \(VER 1\.01\), the retail PAL 1\.01 program",
+    # (the texts' and voices' languages: languages.cpp)
+    r"\] languages: the texts' banks as their names say; the voices as the texts",
     r"\] display: none",
     r"\] audio: none",
+    # (THE LIST 19: the shader programs made at the start, this version's own list for these shaders: a change to hwgs.cpp's
+    # shaders or their bits needs display.cpp's KnownPrograms made again from check_windows' runs' shaders.txt)
+    r"\] graphics: \d+ shader programs made at the start in \d+ ms \(\d+ listed in shaders\.txt, \d+ this version's own\)",
+    # (each thread's first timer query never begun, $TWIN_GPU_TIME_TEST=stuck: left out, the card's time still known)
+    r"\] graphics: a timer query's result not there \d+ frames after it was begun, the next one's there: left out",
     r"\] game: Levels\\Earth\\Hub\\beach loaded in [\d.]+ s",
     r"\] performance: [\d.]+ fps over \d+ s of play, the slowest frame \d+ ms; a frame's work: the game [\d.]+ ms .*"
-    r"VU1 [\d.]+ ms, the render thread [\d.]+ ms, the graphics card [\d.]+ ms; the player in levels\\earth\\hub\\beach",
+    r"the window's present [\d.]+ ms, VU1 [\d.]+ ms, the render thread [\d.]+ ms \(the GS [\d.]+, OpenGL [\d.]+, waiting for "
+    r"the card [\d.]+, the picture handed over [\d.]+\), the graphics card [\d.]+ ms; the player in levels\\earth\\hub\\beach",
     rf"\] session: {DURATION}, {DURATION} of it played at [\d.]+ fps on average, \d+% of it below 57 fps .*"
     r"the slowest frame \d+ ms; a frame's work: .*, the graphics card [\d.]+ ms\n",
     rf"\] exit: the level sweep's run ended \(status 0\) after {DURATION}; the game's state ",
@@ -182,6 +227,360 @@ PORTABLE_LAUNCHER = ("import subprocess, sys\n"
                      "    sys.exit(99)\n")
 
 
+# The PC's mouse kept out of the runs that open a window: the window takes the focus, and a hand on the mouse would turn the
+# camera (mouse look) or click the menus, so the result would depend on who's at the PC (1.2.0's first release check: the
+# SMAA run's view turned). Headless runs don't get the mouse, and the look and hints tests script it there.
+NO_MOUSE = ("mouse", "mouse_look")
+
+
+def without_mouse(text, arguments):
+    """options.txt's TEXT for a run with ARGUMENTS: mouse=0 and mouse_look=0 first when it opens a window (no --headless, not
+    a self-test) and TEXT doesn't set them itself"""
+    if "--headless" in arguments or any(str(a).startswith("--selftest") for a in arguments):
+        return text
+    keys = {line.split("=", 1)[0].strip() for line in (text or "").splitlines()}
+    return "".join(f"{key}=0\n" for key in NO_MOUSE if key not in keys) + (text or "")
+
+
+def run_for(exe, folder, options, env, args, until, seconds=120, resolution=None, files=None):
+    """The program run in a settings folder of its own (FOLDER/settings, with FILES: {path in it: bytes}) until the file UNTIL is
+    there (or it ends, or SECONDS): its log's text"""
+    if folder.exists():
+        shutil.rmtree(folder)
+    settings = folder / "settings" / "Crash Twinsanity"
+    settings.mkdir(parents=True)
+    for name, data in (files or {}).items():
+        (settings / name).parent.mkdir(parents=True, exist_ok=True)
+        (settings / name).write_bytes(data)
+    (settings / "disc_image.txt").write_text(disc_image() + "\n")
+    (settings / "options.txt").write_text(without_mouse("pause_on_focus_loss=0\n" + "".join(f"{o}\n" for o in options), args))
+    if resolution:
+        (settings / "resolution.txt").write_text(resolution)
+    full = dict(os.environ, HOME=str(folder / "settings"), APPDATA=str(folder / "settings"), **env)
+    with open(folder / "log.txt", "w") as log:
+        process = subprocess.Popen([str(exe), *args], env=full, stdout=log, stderr=subprocess.STDOUT, cwd=folder)
+        started = time.time()
+        while (until is None or not until.exists()) and process.poll() is None and time.time() - started < seconds:
+            time.sleep(1)
+        if until is not None and until.exists():
+            time.sleep(2)
+        process.kill()
+        process.wait()
+    return (folder / "log.txt").read_text(errors="replace")
+
+
+def smaa(exe, work, frame=600):
+    """The anti-aliasing option's SMAA (smaa.cpp): the beach at 1x in a 1280x720 window at a fixed time, anti-aliasing off and
+    SMAA, the window as shown ($TWIN_WINDOW_SHOTS): SMAA's shaders made, a few percent of the window's pixels changed (the
+    edges), the picture's brightness the same: (passed, what happened)"""
+    shots = {}
+    for name, value in (("off", 0), ("smaa", 4)):
+        folder = work / f"smaa-{name}"
+        shot = folder / f"window_{frame:06d}.png"
+        log = run_for(exe, folder, [f"anti_aliasing={value}", "widescreen=1"],
+                      {"TWIN_FIXED_TIME": "1", "TWINSANITY_AUDIO": "frames", "TWIN_WINDOW_SHOTS": f"{folder}:{frame}"}, ["--quick"],
+                      shot, resolution="scale=1\nwindow=1280x720\nfullscreen=0\n")
+        if not shot.exists():
+            return False, f"no window picture of frame {frame} ({name})"
+        if value == 4 and "SMAA 1x" not in log:
+            return False, "SMAA's shaders not made (its log line missing)"
+        shots[name] = frame_rgba(shot)
+    (w, h, a), (_, _, b) = shots["off"], shots["smaa"]
+    changed = sum(1 for x, y in zip(a, b) if x != y)
+    share = changed / len(a)
+    bright = (sum(b) - sum(a)) / len(a)
+    what = f"{share:.1%} of the window's bytes changed by SMAA (the edges), the brightness {bright:+.2f} of 255"
+    return 0.005 < share < 0.25 and abs(bright) < 0.5, what
+
+
+def anisotropy(exe, work, frame=600):
+    """Anisotropic filtering at 16x (hwgs.cpp's ANISO): the beach at a fixed time against the pictures check's frame (the option
+    off): some pixels changed (the far textures the game mipmaps), not many: (passed, what happened)"""
+    off = next((p for p in (work / n / "frames" / f"frame_{frame:06d}.png" for n in ("pictures-checked", "pictures-checked-filter"))
+                if p.exists()), None)
+    if off is None:
+        return False, "no picture of the option off (the pictures check's)"
+    folder = work / "anisotropy"
+    frames = folder / "frames"
+    picture = frames / f"frame_{frame:06d}.png"
+
+    if folder.exists():
+        shutil.rmtree(folder)
+    frames.mkdir(parents=True)
+    log = run_for(exe, folder / "run", ["anisotropic_filtering=4"],
+                  {"TWIN_FIXED_TIME": "1", "TWINSANITY_AUDIO": "frames", "TWIN_DUMP_FRAMES": f"{frames}:{frame}"},
+                  ["--quick", "--headless"], picture)
+    if not picture.exists():
+        return False, f"no frame {frame}"
+    _, _, a = frame_rgba(off)
+    _, _, b = frame_rgba(picture)
+    if len(a) != len(b):
+        return False, "the pictures' sizes differ"
+    changed = sum(1 for x, y in zip(a[::4], b[::4]) if x != y) / (len(a) // 4)
+    told = re.search(r"anisotropic filtering up to (\d+)x", log)
+    what = f"{changed:.2%} of the beach's bytes changed at 16x (the card's most {told.group(1) if told else '?'}x)"
+    return 0.0005 < changed < 0.2 and told is not None, what
+
+
+def update_check(exe, work):
+    """The update check (updatecheck.cpp) without the network: GitHub's answer from a file ($TWIN_UPDATE_TEST), a newer release
+    (its page offered) and an older one (nothing), and the option off (no line): (passed, what happened)"""
+    folder = work / "update-check"
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    answers = {"newer": '{"html_url": "https://github.com/GioPixelGH/Crash-Twinsanity-Windows/releases/tag/v9.9.0", "tag_name": "v9.9.0"}',
+               "older": '{"html_url": "https://github.com/GioPixelGH/Crash-Twinsanity-Windows/releases/tag/v0.9.0", "tag_name": "v0.9.0"}'}
+    said = {}
+    for name, body in list(answers.items()) + [("off", None)]:
+        answer = folder / f"{name}.json"
+        if body:
+            answer.write_text(body)
+        log = run_for(exe, folder / name, ["update_check=1"] if body else [],
+                      {"TWIN_UPDATE_TEST": str(answer)}, ["--headless", "--quiet-stubs"], None, 12)
+        said[name] = [line.split("] ", 1)[-1] for line in log.splitlines() if "update check:" in line]
+    newer = any("9.9.0 is out" in line and "releases/tag/v9.9.0" in line for line in said["newer"])
+    older = any("the latest release is 0.9.0" in line and "nothing newer" in line for line in said["older"])
+    off = not said["off"]
+    what = (f"a newer release {'offered' if newer else 'NOT offered'}, an older one {'not' if older else 'WRONGLY'} offered, "
+            f"the option off {'asks nothing' if off else 'ASKED'} (no network: $TWIN_UPDATE_TEST)")
+    return newer and older and off, what
+
+
+def resolution_steps(exe, work):
+    """The Resolution row stepped 2x, 3x, 2x, 3x two frames apart ($TWIN_SETTINGS_LOG_TEST, a window): the renderer drawing at
+    the chosen scale once, when the choice settles (1.1.0 drew at each step): (passed, what happened)"""
+    log = run_for(exe, work / "resolution-steps", ["refresh_60hz=3"], {"TWIN_SETTINGS_LOG_TEST": "1"}, [], None, 90,
+                  resolution="scale=2\nwindow=1280x720\nfullscreen=0\n")
+    scales = re.findall(r"hardware renderer: drawing at (\d+)x", log)
+    return scales == ["2", "3"], f"the renderer's scales: {', '.join(scales) or 'none'} (2 at the start, 3 once chosen)"
+
+
+def game_options(exe, work):
+    """The game options of 1.2.0 (gameoptions.h), each run headless at a fixed time: Crash walked into the beach's sea
+    ($TWIN_PAD_SCRIPT) with infinite lives, the speedrun timer and the shadows on crates on (the bug fixes off): the death costs no
+    life, the play restarts, the timer starts at New Game, crates' materials take shadows; a slide jumped from its first moment
+    with the slide jump "any moment"; the level select's test start of the Iceberg Lab from the main menu on its own card:
+    (passed, what happened)"""
+    fixed = {"TWIN_FIXED_TIME": "1", "TWINSANITY_AUDIO": "frames"}
+    sea = run_for(exe, work / "game-options-sea",
+                  ["infinite_lives=1", "speedrun_timer=1", "shadows_on_crates=1", "retail_fixes=0"],
+                  dict(fixed, TWIN_PAD_SCRIPT="650-1100:lx=255", TWIN_FIXES_TRACE="1"), ["--quick", "--headless"], None, 45)
+    slide = run_for(exe, work / "game-options-slide", ["slide_jump=1"],
+                    dict(fixed, TWIN_PAD_SCRIPT="1100-1200:ly=0;1150-1158:circle;1153-1160:cross"), ["--quick", "--headless"],
+                    None, 40)
+    level = run_for(exe, work / "game-options-level", ["level_select=1"], {"TWIN_LEVEL_SELECT_TEST": "4"}, ["--headless"], None,
+                    40)
+    checks = {
+        "a death free": "infinite lives: a death that cost no life" in sea and "game: restarting" in sea,
+        "the timer started": "speedrun: the timer started (New Game)" in sea,
+        "crates take shadows": "made a shadow receiver" in sea,
+        "a slide jump from its first moment": "slide jump: a long jump from the slide's steering" in slide,
+        "the level select's Iceberg Lab on its own card": ("memorycard-level-select" in level and
+                                                            "Levels\\Ice\\Hub\\labext loaded" in level),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    return not failed, ", ".join(checks) if not failed else "NOT: " + ", ".join(failed)
+
+
+def archive_file(path):
+    """A file of the disc's archive (CRASH6/CRASH.BD's, by CRASH.BH's table), read with iso_extract.py's reading"""
+    sys.path.insert(0, str(HERE / "native" / "tools"))
+    import iso_extract
+    with open(disc_image(), "rb") as image:
+        offset, size = {name.lower(): place for name, place in iso_extract.archive_files(image).items()}[path.lower()]
+        image.seek(offset)
+        return image.read(size)
+
+
+# The mods (mods.cpp, disc.cpp; native/MODDING.md): the disc's own Startup/Default.rm2 and beach.rm2 as the mods folder's loose
+# files, the sound banks Default.rm2's level loads at the start with their lengths (halfwords written to the sound memory) as the
+# disc's own give them (#36: each bank of a mod's file came as the one before it, cut to 1536)
+MOD_BANKS = {"0xe": 3072, "0x13": 4128}
+
+
+def small_iso(files):
+    """An ISO 9660 image of a few files ({"CRASH6/CRASH.BH": bytes, ...}: 2048-byte sectors, the volume descriptor, the
+    directories with their . and .. records, then the files), as a changed disc image would be laid out"""
+    def both16(value):
+        return value.to_bytes(2, "little") + value.to_bytes(2, "big")
+
+    def both32(value):
+        return value.to_bytes(4, "little") + value.to_bytes(4, "big")
+
+    def record(name, sector, size, directory):
+        name = name if isinstance(name, bytes) else name.encode("ascii")
+        length = 33 + len(name) + (len(name) + 1) % 2
+        return (bytes([length, 0]) + both32(sector) + both32(size) + bytes(7) + bytes([2 if directory else 0, 0, 0]) + both16(1) +
+                bytes([len(name)]) + name + bytes(length - 33 - len(name)))
+
+    folders = {"": {}}
+    for path in files:
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            folders.setdefault("/".join(parts[:depth]), {})
+    names = sorted(folders)
+    sector = 18
+    places = {}
+    for name in names:
+        places[name] = sector
+        sector += 1
+    file_places = {}
+    for path in sorted(files):
+        file_places[path] = sector
+        sector += (len(files[path]) + 2047) // 2048 or 1
+    image = bytearray(sector * 2048)
+    for name in names:
+        parent = name.rsplit("/", 1)[0] if "/" in name else ""
+        data = record(b"\0", places[name], 2048, True) + record(b"\1", places[parent], 2048, True)
+        for child in names:
+            if child and (child.rsplit("/", 1)[0] if "/" in child else "") == name:
+                data += record(child.rsplit("/", 1)[-1], places[child], 2048, True)
+        for path in sorted(files):
+            if (path.rsplit("/", 1)[0] if "/" in path else "") == name:
+                data += record(path.rsplit("/", 1)[-1] + ";1", file_places[path], len(files[path]), False)
+        image[places[name] * 2048:places[name] * 2048 + len(data)] = data
+    for path, data in files.items():
+        image[file_places[path] * 2048:file_places[path] * 2048 + len(data)] = data
+    descriptor = bytearray(2048)
+    descriptor[0:7] = b"\x01CD001\x01"
+    descriptor[80:88] = both32(sector)
+    descriptor[128:132] = both16(2048)
+    descriptor[156:190] = record(b"\0", places[""], 2048, True)
+    image[16 * 2048:17 * 2048] = descriptor
+    image[17 * 2048:17 * 2048 + 7] = b"\xffCD001\x01"
+    return bytes(image)
+
+
+def small_archive(entries):
+    """An archive's table and data (CRASH.BH, CRASH.BD) of a few files ({"Language\\AgentLab\\English.txt": bytes})"""
+    table, data = bytearray(4), bytearray()
+    for name, content in entries.items():
+        table += len(name).to_bytes(4, "little") + name.encode("ascii") + len(data).to_bytes(4, "little") + len(content).to_bytes(4, "little")
+        data += content + bytes((-len(content)) % 2048)
+    return bytes(table), bytes(data)
+
+
+# The mods' import (modimport.cpp): a Mod Crate's zip and a changed disc image (MODS_IMPORT_IMAGE: one archive file changed, one
+# the disc's own, a disc file the disc hasn't) put in the mods folder and imported (--import-mods); then played with: the two in
+# the order a new mod takes (by name), then with mods.txt turning the image's off
+MODS_CHANGED_TEXT = b"a mod's text\n"
+
+
+def mods_import(exe, work):
+    """The import of a zip and a changed disc image, and the two mods used in their order and switches: (passed, what happened)"""
+    folder = work / "mods-import"
+    if folder.exists():
+        shutil.rmtree(folder)
+    settings = folder / "settings" / "Crash Twinsanity"
+    (settings / "mods").mkdir(parents=True)
+    (settings / "disc_image.txt").write_text(disc_image() + "\n")
+    (settings / "options.txt").write_text("pause_on_focus_loss=0\nlanguage=1\n")
+    crate = io.BytesIO()
+    with zipfile.ZipFile(crate, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("Example/ModCrateInfo.txt", "Name=Example\nAuthor=check_windows\nVersion=v1\nGame=CrashTS\n")
+        archive.writestr("Example/layer1/Language/AgentLab/English.txt", MODS_CHANGED_TEXT + b"from the crate\n")
+        archive.writestr("Example/layer1/Levels/added.rm2", b"a file the disc's archive hasn't")
+    (settings / "mods" / "Example.zip").write_bytes(crate.getvalue())
+    table, data = small_archive({"Language\\AgentLab\\English.txt": MODS_CHANGED_TEXT + b"from the image\n",
+                                 "Language\\AgentLab\\French.txt": archive_file("Language/AgentLab/French.txt")})
+    (settings / "mods" / "Changed.iso").write_bytes(small_iso({"CRASH6/CRASH.BH": table, "CRASH6/CRASH.BD": data,
+                                                              "FMV/ADDED.PSS": b"a disc file the disc hasn't"}))
+    env = dict(os.environ, HOME=str(folder / "settings"), APPDATA=str(folder / "settings"))
+    imported = subprocess.run([str(exe), "--headless", "--quiet-stubs", "--import-mods"], env=env, cwd=folder, capture_output=True,
+                              text=True, errors="replace", timeout=300)
+    mods_folder = settings / "mods"
+    made = {str(path.relative_to(mods_folder)).replace("\\", "/") for path in mods_folder.rglob("*") if path.is_file()}
+
+    def played(name):
+        """A start with the mods, its log"""
+        with open(folder / f"{name}.txt", "w") as log:
+            process = subprocess.Popen([str(exe), "--headless", "--quiet-stubs"], env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       cwd=folder)
+            time.sleep(10)
+            process.kill()
+            process.wait()
+        return (folder / f"{name}.txt").read_text(errors="replace")
+
+    both = played("both")
+    (settings / "mods.txt").write_text("on\tExample\noff\tChanged\n")
+    one = played("one")
+    checks = {
+        "imported": imported.returncode == 0,
+        "the crate unpacked": {"Example/ModCrateInfo.txt", "Example/layer1/Language/AgentLab/English.txt"} <= made,
+        "the image as what differs": ({"Changed/layer1/Language/AgentLab/English.txt", "Changed/layer0/FMV/ADDED.PSS"} <= made and
+                                      "Changed/layer1/Language/AgentLab/French.txt" not in made),
+        "both on, the first by name": (re.search(r"AGENTLAB/ENGLISH\.TXT from .*Changed.*\(Changed\)", both) is not None and
+                                       "memorycard-mods-Changed+Example" in both and
+                                       "1 of them new" in both),
+        "mods.txt's order and switch": (re.search(r"AGENTLAB/ENGLISH\.TXT from .*Example.*\(Example\)", one) is not None and
+                                        "memorycard-mods-Example" in one and "Changed (off)" in one),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    return not failed, ", ".join(checks) if not failed else "NOT: " + ", ".join(failed)
+
+
+def mods(exe, work):
+    """The mods: the disc's own files as mods, read as the disc's are: the archive's table made again with them, the sound banks of
+    Default.rm2 as long as the disc's (#36), the saves on the mods' own card: (passed, what happened)"""
+    files = {"mods/Startup/Default.rm2": archive_file("Startup/Default.rm2"),
+             "mods/Levels/Earth/Hub/beach.rm2": archive_file("Levels/Earth/Hub/beach.rm2")}
+    log = run_for(exe, work / "mods-same", [], {"TWIN_SOUND_CHECK": "1"},
+                  ["--headless", "--quiet-stubs"], None, 12, files=files)
+    banks, waiting = {}, None
+    for line in log.splitlines():
+        asked = re.search(r"sound check: bank (0x[0-9a-f]+) to be read", line)
+        written = re.search(r"sound check: core 1's DMA writes 0x[0-9a-f]+, (\d+) halfwords", line)
+        if asked:
+            waiting = asked.group(1)
+        elif written and waiting:
+            banks.setdefault(waiting, int(written.group(1)))
+            waiting = None
+    checks = {
+        "the archive's table made again with 2": "the archive's table made again: 2 of its files from mods" in log,
+        "Default.rm2's banks as the disc's (#36)": all(banks.get(bank) == length for bank, length in MOD_BANKS.items()),
+        "the saves on memorycard-mods-loose": "the saves go on memorycard-mods-loose" in log,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    said = ", ".join(f"bank {bank} {banks.get(bank, 'none')}" for bank in MOD_BANKS)
+    return not failed, (", ".join(checks) if not failed else "NOT: " + ", ".join(failed)) + f" ({said})"
+
+
+def other_disc_image(key, root=HERE):
+    """Another disc image local.json may name ("disc_image_usa": the NTSC-U v2.00 disc), or None"""
+    local = root / "local.json"
+    image = json.loads(local.read_text()).get(key, "") if local.exists() else ""
+    return image if image and Path(image).exists() else None
+
+
+def disc_identity(exe, work):
+    """The disc images recognised (discidentity.cpp, --identify-disc: each hashed whole, a fresh settings folder each): local.json's
+    PAL image and, when it names one, the NTSC-U v2.00 image ("disc_image_usa"), each a retail disc of redump.org's:
+    (passed, what happened)"""
+    images = [("PAL", disc_image(), r"disc: the retail disc, SLES-52568 v1\.01 PAL .*redump\.org's disc 4514 \(checked in ([\d.]+) s\)")]
+    usa = other_disc_image("disc_image_usa")
+    if usa:
+        images.append(("NTSC-U", usa, r"disc: the retail disc, SLUS-20909 v2\.00 NTSC-U .*redump\.org's disc 13689 \(checked in ([\d.]+) s\)"))
+    said = []
+    for name, image, pattern in images:
+        folder = work / f"disc-identity-{name}"
+        if folder.exists():
+            shutil.rmtree(folder)
+        settings = folder / "settings" / "Crash Twinsanity"
+        settings.mkdir(parents=True)
+        env = dict(os.environ, HOME=str(folder / "settings"), APPDATA=str(folder / "settings"))
+        result = subprocess.run([str(exe), "--identify-disc", "--iso", image], env=env, capture_output=True, text=True,
+                                errors="replace", timeout=180, cwd=folder)
+        (folder / "log.txt").write_text(result.stdout + result.stderr)
+        found = re.search(pattern, result.stderr)
+        if not found:
+            return False, f"the {name} image not recognised as redump.org's dump (log: {folder / 'log.txt'})"
+        said.append(f"{name} retail ({found.group(1)} s)")
+    if not usa:
+        said.append("no NTSC-U image in local.json (disc_image_usa)")
+    return True, ", ".join(said)
+
+
 def disc_image(root=HERE):
     """The disc image local.json names"""
     local = root / "local.json"
@@ -202,6 +601,7 @@ def run_game(exe, folder, arguments, environment=None, timeout=900, options=None
     settings = folder / "settings" / "Crash Twinsanity"
     settings.mkdir(parents=True)
     (settings / "disc_image.txt").write_text(disc_image() + "\n")
+    options = without_mouse(options, arguments)
     if options:
         (settings / "options.txt").write_text(options)
     env = dict(os.environ, HOME=str(folder / "settings"), APPDATA=str(folder / "settings"), TWINSANITY_AUDIO="off")
@@ -611,7 +1011,7 @@ def session_log(exe, work):
 
     status, log = run("start.txt", ["--iso", disc_image()],
                       {"TWIN_SWEEP_LEVEL": PORTABLE_CHUNK, "TWIN_SWEEP_SECONDS": str(LOG_SECONDS), "TWIN_SWEEP_TIMEOUT": "120",
-                       "TWIN_PERFORMANCE_EVERY": "10"}, 300)
+                       "TWIN_PERFORMANCE_EVERY": "10", "TWIN_GPU_TIME_TEST": "stuck"}, 300)
     results = [result("a start played", status, 0, log, LOG_START, changes=0)]
     status, log = run("error.txt", ["--iso", str(root / "missing image.iso")], {}, 60)
     results.append(result("a start ending on an error", status, 1, log, LOG_ERROR))
@@ -779,7 +1179,7 @@ def window_downsample(exe, work, frame=600):
     settings.mkdir(parents=True)
     (settings / "disc_image.txt").write_text(disc_image() + "\n")
     # (not paused when the window isn't in front: a check run while the PC is in use)
-    (settings / "options.txt").write_text("anti_aliasing=0\nwidescreen=1\npause_on_focus_loss=0\n")
+    (settings / "options.txt").write_text(without_mouse("anti_aliasing=0\nwidescreen=1\npause_on_focus_loss=0\n", ["--quick"]))
     (settings / "resolution.txt").write_text("scale=8\nwindow=1280x720\nfullscreen=0\n")
     env = dict(os.environ, HOME=str(folder / "settings"), APPDATA=str(folder / "settings"), TWIN_FIXED_TIME="1",
                TWINSANITY_AUDIO="frames", TWIN_DUMP_FRAMES=f"{folder}:{frame}", TWIN_WINDOW_SHOTS=f"{folder}:{frame}")
@@ -862,7 +1262,11 @@ def dithering(exe, work, frame=300):
     """The Dithering option off (hwgs.cpp's full colour dithered draws): the beach's frame at a fixed time against the pictures
     check's, made as the PS2 (the default): that one 5 bits a channel (no low three bits), this one the frame's full colour (most
     channels' low bits set) and a little brighter (the truncation's floor gone): (passed, what happened)"""
-    ps2 = work / "pictures-checked-filter" / "frames" / f"frame_{frame:06d}.png"
+    # (The pictures check's folder: "checked-filter" against a reference from before 1.1.0, "checked" from 1.1.0 on: this run's,
+    # the newer one)
+    made = [path for path in (work / name / "frames" / f"frame_{frame:06d}.png"
+                              for name in ("pictures-checked-filter", "pictures-checked")) if path.exists()]
+    ps2 = max(made, key=lambda path: path.stat().st_mtime) if made else work / "pictures-checked" / "frames" / "none"
     folder = work / "dithering"
     if folder.exists():
         shutil.rmtree(folder)
@@ -1462,6 +1866,38 @@ def report(exe, reference, work, with_sweep, reference_name=None):
 
     ok, what = render_distance(exe, work)
     print(f"draw distance   {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = disc_identity(exe, work)
+    print(f"disc identity   {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = smaa(exe, work)
+    print(f"smaa            {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = anisotropy(exe, work)
+    print(f"anisotropy      {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = update_check(exe, work)
+    print(f"update check    {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = resolution_steps(exe, work)
+    print(f"resolution      {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = game_options(exe, work)
+    print(f"game options    {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = mods(exe, work)
+    print(f"mods            {'ok' if ok else 'FAILED'}: {what}")
+    failed |= not ok
+
+    ok, what = mods_import(exe, work)
+    print(f"mods import     {'ok' if ok else 'FAILED'}: {what}")
     failed |= not ok
 
     if with_sweep:
