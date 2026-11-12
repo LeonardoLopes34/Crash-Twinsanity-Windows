@@ -2012,6 +2012,26 @@ u32 GameController::Restarting(TimeClock*)
     {
         ChunkLoader* loader = FindChunkLoader(G_ChunkLoadingManager_, &progress.startChunk);
         loading = loader == nullptr || !ChunkLoaderIsLoaded(loader, true);
+#ifdef TWIN_NATIVE
+        // Two players: the restart in place only with the played character in the checkpoint's area or the next one, as with one
+        // player (the checkpoint's area is loaded only around the player then). Loaded around the second player far away, the first
+        // was taken from the beach to highpath in place, its own places still the beach's: the cutscene there put it at the beach's
+        // numbers and never ended (2026-11-11). Else the level's load, as when the area isn't loaded
+        if (!loading && (Coop::SecondPlayerWanted() || Coop::Active()))
+        {
+            ChunkData* target = loader->sm2 != nullptr && loader->sm2->data != nullptr ? loader->sm2->data->chunk : nullptr;
+            InstanceContext* played = CharacterInstance(&progress);
+            ChunkData* at = played != nullptr ? played->chunk : nullptr;
+            if (target == nullptr || at == nullptr || (at != target && FindLinkTo(at, target) == nullptr))
+            {
+                loading = true;
+                Native::Log("second player: the checkpoint's area (%s) isn't the played character's or next to it (%s): the level "
+                            "loaded again",
+                            progress.startChunk.string != nullptr ? progress.startChunk.string : "?",
+                            at != nullptr && at->name.string != nullptr ? at->name.string : "none");
+            }
+        }
+#endif
     }
 
     if (loading)
