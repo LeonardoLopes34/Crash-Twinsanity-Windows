@@ -105,8 +105,9 @@ boneco (puppet) sem física. A troca de "o jogador" e o `NearerPlayer` ficam des
 
 ## Regras de jogo combinadas com o usuário
 
-- Barcos e portas de fase: **quem entra é o Jogador 1**, com o Jogador 2 na mochila. Assim chegaram ao Ice Lab sem bug. Se o
-  jogo leva o Jogador 2 para longe num quadro (o barco), o Jogador 1 é levado até ele e o 2 entra na mochila (`LeashFrame`).
+- Barco: **é de quem sobe**. Subido pelo Jogador 2 (o jogo o leva para longe num quadro, ou com os controles travados por
+  roteiro), o Jogador 1 vai na mochila do 2 (`LeashFrame`) e acompanha o 2 por qualquer área ligada (`BackpackFrame`). Pôr o 1
+  no barco no lugar do 2 não funciona: ele não fica preso ao barco e afunda (12/11).
 - Cutscene: de quem ativou (`StartLead`, do andrew). Filme (estado 14): ninguém é movido depois (`afterMovie`).
 - Aku Aku: uma máscara só no jogo, segue "o jogador". Um Aku Aku próprio do Jogador 2 seria recurso novo, não pedido ainda.
 - Veículo com o Cortex (pareamento 3, a bola da caverna, que vale a caverna inteira; 2, o Humiliskate): o Jogador 2 fica na

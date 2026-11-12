@@ -1663,16 +1663,6 @@ void RetireSecond(const char* why)
 // Since when the two players have been in different areas of the map (0: they're in the same one)
 u64 g_ApartSince = 0;
 
-// The first player held on a spot until a moment (BackpackFrame), while it's in that area
-struct Hold
-{
-    InstanceContext* instance = nullptr;
-    ChunkData* chunk = nullptr;
-    Vector4 at = {};
-    u64 until = 0;
-};
-Hold g_Hold;
-
 bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
 
 void LeashFrame()
@@ -1689,18 +1679,6 @@ void LeashFrame()
     // is made again beside the first; a moment of it is the walk across a door, which the game itself carries it through
     if (first->chunk != second->chunk)
     {
-        // Left on the boat once the first player got off it on the other side (the game takes only the first player off): made
-        // again beside the first. It stood on in hubboat2 by hubd until it got into the backpack (2026-11-12). shortcut: a boat's
-        // area known by "boat" in its name, until there's a way to tell a ride the game gives from a walk
-        const char* secondArea = second->chunk != nullptr ? second->chunk->name.string : nullptr;
-        const char* firstArea = first->chunk != nullptr ? first->chunk->name.string : nullptr;
-        if (secondArea != nullptr && std::strstr(secondArea, "boat") != nullptr &&
-            (firstArea == nullptr || std::strstr(firstArea, "boat") == nullptr))
-        {
-            RetireSecond("left on the boat, player 1 off it");
-            return;
-        }
-
         // A neighbouring area the game steps in full (the areas next to the first player's: its loader steps every node kind
         // there) is play as usual: the second player walks on there, no leash (the areas' numbers can't be compared). Only an area
         // the game doesn't step in full (further away, or let go) makes it again beside the first, a moment later. (Made again
@@ -1770,38 +1748,23 @@ void LeashFrame()
     float dy = first->place->position.y - second->place->position.y;
     float dz = first->place->position.z - second->place->position.z;
     float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-    // Far in one frame: the game moved the second player (the boat off the pier: 742 away at once). The first taken there and the
-    // second into its backpack, as a cutscene does, so the game's move goes on with the first. Pulled back into the first's backpack
-    // instead, the boat's script lost its player and the screen stayed black. The first is held on that spot until the game takes it
-    // to another area (3 s at most): the boat's spot is under the pier, where the script held the second; let go, the first sank
-    // and the game went back to the checkpoint a second later (2026-11-12)
+    // Past the leash moved by the game, not by walking: in one frame (the boat off the pier, under it, 742 away at once) or with its
+    // inputs locked by a script (the boat sailing off the Ice Lab, 300 away bit by bit). The boat is the second player's then: the
+    // first rides in its backpack, the script carries the second on as its player, and the first goes along through each area. Pulled
+    // back alone, the boat's script lost its player (a black screen); the first put on the boat in its place wasn't on it and sank
+    // (back to the checkpoint a second later, 2026-11-12)
     static float lastDistance = -1.0f;
-    bool moved = lastDistance >= 0.0f && lastDistance < LimitAt && distance >= LimitAt && distance - lastDistance > 50.0f &&
-                 SDL_GetTicksNS() - g_RideChanged > 1000000000ull;
-    lastDistance = distance;
-    if (moved && PutFirstWhereSecond(first, second))
-    {
-        Native::Log("second player: moved %.1f away by the game in a frame: player 1 taken there, player 2 into its backpack", distance);
-        lastDistance = -1.0f;
-        StartRide(1);
-        first->place->SyncPosition();
-        g_Hold = {first, first->chunk, first->place->position, SDL_GetTicksNS() + 3000000000ull};
-        return;
-    }
-
-    // Past the leash with its inputs locked by a script: the game carries the second player away (the boat sailing off the Ice Lab,
-    // 300 away bit by bit). The first taken onto its spot with the same inputs locked, the second into its backpack, so the script
-    // carries the first on. Pulled back alone, the boat's script waited for a player that wasn't on it: a black screen (2026-11-12)
     CharacterAgent* secondAgent = AgentOf(second);
-    CharacterAgent* firstAgent = AgentOf(first);
-    if (distance >= LimitAt && secondAgent != nullptr && firstAgent != nullptr && secondAgent->buttons.locked.value != 0 &&
-        PutFirstWhereSecond(first, second))
+    bool moved = lastDistance >= 0.0f && lastDistance < LimitAt && distance - lastDistance > 50.0f &&
+                 SDL_GetTicksNS() - g_RideChanged > 1000000000ull;
+    bool carried = secondAgent != nullptr && secondAgent->buttons.locked.value != 0;
+    lastDistance = distance;
+    if (distance >= LimitAt && (moved || carried))
     {
-        Native::Log("second player: carried %.1f away by a script (inputs locked): player 1 taken there, player 2 into its backpack",
-                    distance);
-        firstAgent->buttons.locked.value = secondAgent->buttons.locked.value;
+        Native::Log("second player: %.1f away, moved by the game (%s): player 1 rides in player 2's backpack", distance,
+                    moved ? "in a frame" : "inputs locked by a script");
         lastDistance = -1.0f;
-        StartRide(1);
+        StartRide(0);
         return;
     }
 
@@ -1817,20 +1780,6 @@ void LeashFrame()
 
 void BackpackFrame()
 {
-    // The first player held on the spot the game moved the second to (LeashFrame), until it takes the first to another area
-    if (g_Hold.instance != nullptr)
-    {
-        InstanceContext* first = FirstPlayer();
-        if (first == g_Hold.instance && first->chunk == g_Hold.chunk && SDL_GetTicksNS() < g_Hold.until)
-        {
-            PutAt(first, g_Hold.at);
-        }
-        else
-        {
-            g_Hold = Hold();
-        }
-    }
-
     g_Leash = 0.0f;
     bool pressed[2] = {BackpackPressed(0), BackpackPressed(1)};
     if (SDL_GetTicksNS() - g_RideChanged < RideDebounce)
@@ -1903,9 +1852,6 @@ void BackpackFrame()
 
         InstanceContext* carrier = PlayerOf(1 - g_Ride.rider);
         carrier->place->SyncPosition();
-        // The carrier's place jumped (another area's numbers, a teleport) or it left the area: the first player isn't carried
-        // there. The game loads the world around the first player only: carried with the second onto the boat to the Ice Lab, the
-        // first was left over the water when the boat's area came, fell, and the game went back to the checkpoint before Tikimon
         Vector4& carrierWas = g_CarrierWas;
         InstanceContext*& carrierWasOf = g_CarrierWasOf;
         bool jumped = carrierWasOf == carrier && std::fabs(carrier->place->position.x - carrierWas.x) +
@@ -1913,12 +1859,26 @@ void BackpackFrame()
                                                          std::fabs(carrier->place->position.z - carrierWas.z) > 25.0f;
         carrierWas = carrier->place->position;
         carrierWasOf = carrier;
-        if (g_Ride.rider == 0 && (jumped || carrier->chunk != g_Ride.instance->chunk))
+        if (g_Ride.rider == 0)
         {
-            // Out where it was last carried to, in its own area: the spot the carrier stood on just before it crossed (sent back to
-            // where it got in, the first player took it for a return to the checkpoint without dying: 2026-11-11)
+            // The first player rides along wherever the second goes: a teleport, another area through the link between them (the
+            // boat the second player takes, 2026-11-12; the world is kept around both players now). It was let out at the edge of
+            // the second's area when the world was kept around the first only (carried onto the boat to the Ice Lab it fell, before)
+            if (carrier->chunk == g_Ride.instance->chunk || PutFirstWhereSecond(g_Ride.instance, carrier))
+            {
+                g_ApartSince = 0;
+                PutAt(g_Ride.instance, carrier->place->position);
+                if (CharacterAgent* agent = AgentOf(g_Ride.instance))
+                {
+                    agent->moveInput = {0.0f, 0.0f, 0.0f, 1.0f};
+                }
+
+                return;
+            }
+
+            // No loaded link between the two areas: out where it was last carried to, in its own area
             EndRide();
-            Native::Log("second player: player 2 left player 1's area (or jumped): player 1 out of the backpack where it was carried to");
+            Native::Log("second player: player 2's area can't be reached from player 1's: player 1 out of the backpack where it was");
             return;
         }
 
