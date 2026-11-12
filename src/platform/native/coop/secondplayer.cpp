@@ -1652,6 +1652,16 @@ void RetireSecond(const char* why)
 // Since when the two players have been in different areas of the map (0: they're in the same one)
 u64 g_ApartSince = 0;
 
+// The first player held on a spot until a moment (BackpackFrame), while it's in that area
+struct Hold
+{
+    InstanceContext* instance = nullptr;
+    ChunkData* chunk = nullptr;
+    Vector4 at = {};
+    u64 until = 0;
+};
+Hold g_Hold;
+
 bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
 
 void LeashFrame()
@@ -1739,7 +1749,9 @@ void LeashFrame()
     float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
     // Far in one frame: the game moved the second player (the boat off the pier: 742 away at once). The first taken there and the
     // second into its backpack, as a cutscene does, so the game's move goes on with the first. Pulled back into the first's backpack
-    // instead, the boat's script lost its player and the screen stayed black (2026-11-12)
+    // instead, the boat's script lost its player and the screen stayed black. The first is held on that spot until the game takes it
+    // to another area (3 s at most): the boat's spot is under the pier, where the script held the second; let go, the first sank
+    // and the game went back to the checkpoint a second later (2026-11-12)
     static float lastDistance = -1.0f;
     bool moved = lastDistance >= 0.0f && lastDistance < LimitAt && distance >= LimitAt && distance - lastDistance > 50.0f &&
                  SDL_GetTicksNS() - g_RideChanged > 1000000000ull;
@@ -1749,6 +1761,8 @@ void LeashFrame()
         Native::Log("second player: moved %.1f away by the game in a frame: player 1 taken there, player 2 into its backpack", distance);
         lastDistance = -1.0f;
         StartRide(1);
+        first->place->SyncPosition();
+        g_Hold = {first, first->chunk, first->place->position, SDL_GetTicksNS() + 3000000000ull};
         return;
     }
 
@@ -1764,6 +1778,20 @@ void LeashFrame()
 
 void BackpackFrame()
 {
+    // The first player held on the spot the game moved the second to (LeashFrame), until it takes the first to another area
+    if (g_Hold.instance != nullptr)
+    {
+        InstanceContext* first = FirstPlayer();
+        if (first == g_Hold.instance && first->chunk == g_Hold.chunk && SDL_GetTicksNS() < g_Hold.until)
+        {
+            PutAt(first, g_Hold.at);
+        }
+        else
+        {
+            g_Hold = Hold();
+        }
+    }
+
     g_Leash = 0.0f;
     bool pressed[2] = {BackpackPressed(0), BackpackPressed(1)};
     if (SDL_GetTicksNS() - g_RideChanged < RideDebounce)

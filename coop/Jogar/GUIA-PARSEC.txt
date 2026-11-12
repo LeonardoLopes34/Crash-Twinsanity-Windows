@@ -78,8 +78,8 @@ BARCO, PORTAS DE FASE E VIAGENS
 -------------------------------
 - O jogo carrega o mundo em volta do Jogador 1. Para pegar o barco (por exemplo, para o Ice Lab) ou entrar numa fase, quem
   entra e o Jogador 1, com o Jogador 2 na mochila dele.
-- Se o Jogador 2 subir no barco sozinho, o Jogador 1 e levado ate ele e o Jogador 2 vai para a mochila do Jogador 1
-  (antes a tela ficava preta ate voltar ao checkpoint pelo menu).
+- Se o Jogador 2 subir no barco sozinho, o Jogador 1 e levado ate ele (e segurado ali ate a viagem comecar) e o Jogador 2
+  vai para a mochila do Jogador 1.
 - Filme (como o da chegada perto do Tikimon) ativado pelo Jogador 2: depois dele cada um continua onde estava (antes o
   Jogador 2 era levado de volta para o Jogador 1).
 - Aku Aku: o jogo tem uma mascara so, que segue quem e "o jogador" naquele lugar. Com o Jogador 2 na mochila ela fica com o
@@ -106,8 +106,8 @@ MINIMAPA
 
 CHECKPOINT
 ----------
-- So vale quando os dois estao perto dele (15 de alcance). Quem chega primeiro fica parado esperando.
-- Pra cancelar a espera e andar de novo: tecla X (Jogador 1) ou B (Jogador 2). Ao voltar pro alcance, ele pede de novo.
+- Vale para quem encostar nele, o Jogador 1 ou o 2, sem esperar o outro. Ao voltar ao checkpoint, o Jogador 1 aparece
+  nele e o Jogador 2 ao lado.
 
 MOCHILA
 -------
