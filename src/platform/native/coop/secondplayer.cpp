@@ -3090,6 +3090,7 @@ void SecondPlayerFrame()
     static bool cutsceneHeld = false;
     static GamePad* heldPad = nullptr;
     static u32 heldCollision = 0;
+    static bool afterMovie = false;
     if (state != GameController::StatePlaying)
     {
         if (g_SecondLeads)
@@ -3106,6 +3107,17 @@ void SecondPlayerFrame()
             {
                 return;
             }
+        }
+
+        // A movie and the start of play after it: nobody moved, the second player left where it is. Taken for a load, it went into
+        // the first's backpack and, the first in another area, was made again beside it (the movie by Tikimon's island the second
+        // player set off from hubd, the first in hubc: 2026-11-12)
+        afterMovie = state == GameController::StateMovie ||
+                     (afterMovie && (state == GameController::StateStartingPlay || state == GameController::StatePaused ||
+                                     state == GameController::StateWaiting));
+        if (afterMovie)
+        {
+            return;
         }
 
         if (state == GameController::StateWatching && Valid())
@@ -3164,6 +3176,7 @@ void SecondPlayerFrame()
         return;
     }
 
+    afterMovie = false;
     // Back in play after a cutscene the second player led: "the player" the first again, both where they are (the first beside the
     // second when it rode in its backpack); the second player kept as it is (it played the cutscene itself: nothing to make again)
     if (g_SecondLeads && (g_LeadOutOfPlay || SDL_GetTicksNS() - g_LeadSince > 2000000000ull))
