@@ -78,8 +78,9 @@ BARCO, PORTAS DE FASE E VIAGENS
 -------------------------------
 - O jogo carrega o mundo em volta do Jogador 1. Para pegar o barco (por exemplo, para o Ice Lab) ou entrar numa fase, quem
   entra e o Jogador 1, com o Jogador 2 na mochila dele.
-- Se o Jogador 2 subir no barco sozinho, o Jogador 1 e levado ate ele (e segurado ali ate a viagem comecar) e o Jogador 2
-  vai para a mochila do Jogador 1.
+- Se o Jogador 2 subir no barco sozinho, o Jogador 1 e levado ate ele quando o barco o leva para longe (e segurado ali ate
+  a viagem continuar) e o Jogador 2 vai para a mochila do Jogador 1.
+- Se o Jogador 1 descer do barco do outro lado e o Jogador 2 ainda estiver no barco, o Jogador 2 aparece ao lado dele.
 - Filme (como o da chegada perto do Tikimon) ativado pelo Jogador 2: depois dele cada um continua onde estava (antes o
   Jogador 2 era levado de volta para o Jogador 1).
 - Aku Aku: o jogo tem uma mascara so, que segue quem e "o jogador" naquele lugar. Com o Jogador 2 na mochila ela fica com o

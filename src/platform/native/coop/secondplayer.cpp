@@ -1689,6 +1689,18 @@ void LeashFrame()
     // is made again beside the first; a moment of it is the walk across a door, which the game itself carries it through
     if (first->chunk != second->chunk)
     {
+        // Left on the boat once the first player got off it on the other side (the game takes only the first player off): made
+        // again beside the first. It stood on in hubboat2 by hubd until it got into the backpack (2026-11-12). shortcut: a boat's
+        // area known by "boat" in its name, until there's a way to tell a ride the game gives from a walk
+        const char* secondArea = second->chunk != nullptr ? second->chunk->name.string : nullptr;
+        const char* firstArea = first->chunk != nullptr ? first->chunk->name.string : nullptr;
+        if (secondArea != nullptr && std::strstr(secondArea, "boat") != nullptr &&
+            (firstArea == nullptr || std::strstr(firstArea, "boat") == nullptr))
+        {
+            RetireSecond("left on the boat, player 1 off it");
+            return;
+        }
+
         // A neighbouring area the game steps in full (the areas next to the first player's: its loader steps every node kind
         // there) is play as usual: the second player walks on there, no leash (the areas' numbers can't be compared). Only an area
         // the game doesn't step in full (further away, or let go) makes it again beside the first, a moment later. (Made again
@@ -1774,6 +1786,22 @@ void LeashFrame()
         StartRide(1);
         first->place->SyncPosition();
         g_Hold = {first, first->chunk, first->place->position, SDL_GetTicksNS() + 3000000000ull};
+        return;
+    }
+
+    // Past the leash with its inputs locked by a script: the game carries the second player away (the boat sailing off the Ice Lab,
+    // 300 away bit by bit). The first taken onto its spot with the same inputs locked, the second into its backpack, so the script
+    // carries the first on. Pulled back alone, the boat's script waited for a player that wasn't on it: a black screen (2026-11-12)
+    CharacterAgent* secondAgent = AgentOf(second);
+    CharacterAgent* firstAgent = AgentOf(first);
+    if (distance >= LimitAt && secondAgent != nullptr && firstAgent != nullptr && secondAgent->buttons.locked.value != 0 &&
+        PutFirstWhereSecond(first, second))
+    {
+        Native::Log("second player: carried %.1f away by a script (inputs locked): player 1 taken there, player 2 into its backpack",
+                    distance);
+        firstAgent->buttons.locked.value = secondAgent->buttons.locked.value;
+        lastDistance = -1.0f;
+        StartRide(1);
         return;
     }
 
