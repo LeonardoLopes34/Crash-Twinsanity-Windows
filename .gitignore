@@ -51,3 +51,4 @@ desktop.ini
 # The game's disc image, never shared (each player needs their own PAL copy)
 *.iso
 /iso/
+/coop/Jogar/perfil.txt

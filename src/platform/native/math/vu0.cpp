@@ -957,6 +957,16 @@ void Vu0CallMicroprogram(u32 address)
         }
     }
 
+    // The host's own arithmetic through the program, rounding as the model does (vufloat.h's HostRounding: the same results at a
+    // fraction of the exact rounding's cost; $TWIN_VU_EXACT_ROUNDING keeps the exact rounding's code)
+    static const bool exact = std::getenv("TWIN_VU_EXACT_ROUNDING") != nullptr;
+    if (exact)
+    {
+        program->run(TheVu0());
+        return;
+    }
+
+    VuFloat::HostRounding rounding;
     program->run(TheVu0());
 }
 }
