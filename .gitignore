@@ -1,4 +1,4 @@
-# Made from the retail executable, which isn't ours to share: the executable itself (SLES_525.68 from the PAL disc), what
+﻿# Made from the retail executable, which isn't ours to share: the executable itself (SLES_525.68 from the PAL disc), what
 # tools/split.py splits it into, and the Ghidra project's export symbol_addrs.txt is made from (tools/make_symbols.py)
 /SLES_525.68
 /asm/
@@ -51,4 +51,4 @@ desktop.ini
 # The game's disc image, never shared (each player needs their own PAL copy)
 *.iso
 /iso/
-/coop/Jogar/perfil.txt
+/coop/Jogar/perfil*.txt
