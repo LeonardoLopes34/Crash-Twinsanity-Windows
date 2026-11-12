@@ -6,12 +6,16 @@ Este repositório é o fork `LeonardoLopes34/Crash-Twinsanity-Windows` do port n
 O usuário fala português (pt-BR), informal. Responda em português. Comentários e mensagens de commit seguem o estilo do
 projeto, em inglês descritivo (veja `git log`).
 
-## Situação atual (11/11/2026)
+## Situação atual (12/11/2026)
 
 - **Foco: modo Parsec** (dois jogadores num PC, duas janelas, `TWIN_PLAYERS=2`). O amigo joga pelo Parsec, só com um
   controle.
 - **Modo online (Radmin VPN) pausado.** O código fica, sem mudanças novas. Protocolo 5.
-- A maior parte das correções de 11/11 compila, mas **ainda não foi testada em jogo**. Veja a seção "Para testar".
+- **12/11: o branch `multiplayer-de-verdade` do andrew (amigo do usuário) foi juntado no `coop-online`** (fast-forward). Ele
+  traz a 1.2.0 do original, o mundo vivo em volta dos dois (`chunkloading.cpp`), a cutscene de quem ativou
+  (`StartLead`/`FinishLead`) e o resto descrito em `coop/PLANO_MULTIPLAYER.md`. A cópia dele fica em `S:\Leo\PROJETO CRASH`
+  (remoto `andrew` aqui); o `.venv` de lá aponta para um Python que não existe neste PC.
+- Depois da 1.2.0, `configure.py` precisa de `PS2DEV=build\ps2dev` (o `COMPILAR.bat` define).
 
 ## Máquina do usuário
 
@@ -31,8 +35,7 @@ projeto, em inglês descritivo (veja `git log`).
 - Remotos: `origin` = GioPixelGH (upstream, só leitura), `fork` = LeonardoLopes34 (onde se envia).
 - Enviar: `git push fork coop-online`.
 - Autor local do repositório: Parafalll. Faça um commit por correção, com mensagem detalhada no estilo do `git log`.
-- O original está 45 commits à frente (versão 1.2.0). Ainda não foi feito merge: `git merge fork/main` no `coop-online`
-  quando o usuário quiser.
+- A 1.2.0 do original já está no `coop-online` (merge `ac91837`, do andrew).
 - Nunca enviar: ISO, `SLES_525.68`, exe, DLLs, zips, logs (o `.gitignore` já cobre). Os `.bat` ficam com CRLF (via
   `.gitattributes`).
 
@@ -102,8 +105,10 @@ boneco (puppet) sem física. A troca de "o jogador" e o `NearerPlayer` ficam des
 
 ## Regras de jogo combinadas com o usuário
 
-- Barcos e portas de fase: **quem entra é o Jogador 1**, com o Jogador 2 na mochila. Assim chegaram ao Ice Lab sem bug.
-- Cutscene: começa na hora, Jogador 2 na mochila, depois os dois juntos.
+- Barcos e portas de fase: **quem entra é o Jogador 1**, com o Jogador 2 na mochila. Assim chegaram ao Ice Lab sem bug. Se o
+  jogo leva o Jogador 2 para longe num quadro (o barco), o Jogador 1 é levado até ele e o 2 entra na mochila (`LeashFrame`).
+- Cutscene: de quem ativou (`StartLead`, do andrew). Filme (estado 14): ninguém é movido depois (`afterMovie`).
+- Aku Aku: uma máscara só no jogo, segue "o jogador". Um Aku Aku próprio do Jogador 2 seria recurso novo, não pedido ainda.
 - Veículo com o Cortex (pareamento 3, a bola da caverna, que vale a caverna inteira; 2, o Humiliskate): o Jogador 2 fica na
   mochila, com uma vista só (`OnVehicle`). Decidido com o usuário em 11/11: andar junto não acompanha a bola.
 - O `coop\Jogar\GUIA-PARSEC.txt` é o guia dos jogadores. **Atualize sempre que mudar algum comportamento.**
@@ -121,8 +126,8 @@ boneco (puppet) sem física. A troca de "o jogador" e o `NearerPlayer` ficam des
 
 ## Em aberto
 
-- Lutas de chefe sem cutscene (Tikimon já deu problema; a proteção `KeepPlayersApart` foi feita para ele).
-- Merge da 1.2.0 do original.
+- Lutas de chefe sem cutscene (Tikimon já deu problema; a proteção `KeepPlayersApart` foi feita para ele). A cutscene depois
+  do Cortex não disparou uma vez com o Jogador 2 na mochila (11/11, sem causa achada).
 - No GitHub, só o usuário pode fazer: branch padrão do fork para `coop-online` e arquivar o `projeto-crashTwin-multiplayer`.
 - Online: Crash verde e atalhos do controle sem confirmação.
 - Desempenho: o custo vem da emulação (VU1 e thread de desenho, ~5–7 ms por quadro em cenas cheias). Otimizar isso seria
