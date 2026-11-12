@@ -153,6 +153,16 @@ struct Presenter
 
 Presenter g_Presenter;
 void (*g_Overlay)(int, int, float) = nullptr;
+}
+
+namespace NativeUi
+{
+// The window the overlay's next picture goes to (0 the first player's, 1 the second's: ui/fpscounter.cpp)
+void SetCountedWindow(int window);
+}
+
+namespace
+{
 // The window shot asked for (NativeGraphicsShootWindow): its file, written at the next picture shown
 std::mutex g_WindowShotLock;
 std::string g_WindowShotPath;
@@ -892,6 +902,8 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
 
     if (g_Overlay != nullptr)
     {
+        // (The FPS counter counts and shows each window's own pictures: ui/fpscounter.cpp)
+        NativeUi::SetCountedWindow(target != p.window ? 1 : 0);
         s32 points = 0;
         s32 pointsHigh = 0;
         SDL_GetWindowSize(target, &points, &pointsHigh);

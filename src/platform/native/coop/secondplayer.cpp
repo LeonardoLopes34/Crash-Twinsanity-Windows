@@ -273,7 +273,8 @@ int ViewRate(int view)
     {
         const char* variable = std::getenv(view == 0 ? "TWIN_P1_FPS" : "TWIN_P2_FPS");
         int rate = variable != nullptr ? std::atoi(variable) : 0;
-        rates[view] = rate >= 20 && rate <= 240 ? rate : (view == 0 ? 90 : 60);
+        // (Up to 1000: "as fast as it goes", to measure what the PC gives, DOIS JOGADORES SEM TRAVA.bat)
+        rates[view] = rate >= 20 && rate <= 1000 ? rate : (view == 0 ? 90 : 60);
         Native::Log("two players: window %d at %d frames a second", view + 1, rates[view]);
     }
 
@@ -1378,7 +1379,11 @@ int TwoViewsFrame()
                 }
             }
 
-            next = turns[0] <= turns[1] ? 0 : 1;
+            // (A tie, the other view than the last: both behind every frame, as fast as it goes, both turns were "now" and the first
+            // always won, the second window black, 2026-11-11)
+            static int last = 1;
+            next = turns[0] < turns[1] ? 0 : turns[1] < turns[0] ? 1 : 1 - last;
+            last = next;
             // (Its picture is shown two frames later, graphics/display.cpp's ShowFrame: the frame whose start is paced now shows the
             // picture chosen two choices ago, so that one's turn paces it)
             g_Turns[g_TurnCount % 3] = turns[next];

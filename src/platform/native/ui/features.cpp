@@ -479,12 +479,21 @@ s32 FrameRate()
     if (!keep && Coop::SecondPlayerWanted())
     {
         s32 both = Coop::TwoViewsFrameRate();
+        // Past what a computer gives (the test's 1000 a window): "unlimited", as the option's is, the clock's work budget the
+        // unlimited one's. Taken as 2000 frames a second, the budget left the background work (the loading) no time in a frame, and
+        // the title loaded forever (2026-11-11)
+        constexpr s32 MostPaced = 480;
+        if (both > MostPaced)
+        {
+            both = 0;
+        }
+
         static bool logged = false;
         if (!logged)
         {
             logged = true;
-            Native::Log("two players: %d frames a second played, each window at its own rate (the option's %s set aside)", both,
-                        rate == 0 ? "unlimited" : std::to_string(rate).c_str());
+            Native::Log("two players: %s frames a second played, each window at its own rate (the option's %s set aside)",
+                        both == 0 ? "as many" : std::to_string(both).c_str(), rate == 0 ? "unlimited" : std::to_string(rate).c_str());
         }
 
         return both;

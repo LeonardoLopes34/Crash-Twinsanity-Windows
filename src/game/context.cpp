@@ -22,7 +22,75 @@
 
 #ifdef TWIN_NATIVE
 #include "coop/coop.h"
+#include "native.h"
 #include "ui/nativeui.h"
+
+#include <chrono>
+
+namespace
+{
+// Where a frame's time on the game's thread goes (2026-11-11, before the two views' change: how much is the world's step and how
+// much the drawing's), logged every 60 s: the frame's start with the instances' step, the rest of the world's step (chunks,
+// physics, the game's update), the drawing's lists (EndFrame), the sound and the render's preparation, and the renderer's
+// submission with its waits (the pace, the vertical blank)
+enum FramePhase
+{
+    PhaseBegin,
+    PhaseStep,
+    PhaseDrawLists,
+    PhaseRenderPrep,
+    PhaseSubmit,
+    PhaseCount,
+};
+
+u64 g_PhaseTotals[PhaseCount] = {};
+u64 g_PhaseFrames = 0;
+u64 g_PhasesSince = 0;
+
+u64 PhaseNow()
+{
+    return static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+struct PhaseTimer
+{
+    FramePhase phase;
+    u64 from;
+    explicit PhaseTimer(FramePhase which) : phase(which), from(PhaseNow()) {}
+    ~PhaseTimer() { g_PhaseTotals[phase] += PhaseNow() - from; }
+};
+
+void PhasesFrameDone()
+{
+    g_PhaseFrames++;
+    u64 now = PhaseNow();
+    if (g_PhasesSince == 0)
+    {
+        g_PhasesSince = now;
+        return;
+    }
+
+    if (now - g_PhasesSince < 60000000000ull || g_PhaseFrames == 0)
+    {
+        return;
+    }
+
+    auto ms = [](u64 total) { return static_cast<double>(total) / static_cast<double>(g_PhaseFrames) / 1e6; };
+    Native::Log("frame split: %llu frames in %.0f s, a frame's game thread: the frame's start and the instances %.2f ms, the world's "
+                "step %.2f ms, the drawing's lists %.2f ms, sound and the render's preparation %.2f ms, submission and waits %.2f ms",
+                static_cast<unsigned long long>(g_PhaseFrames), static_cast<double>(now - g_PhasesSince) / 1e9,
+                ms(g_PhaseTotals[PhaseBegin]), ms(g_PhaseTotals[PhaseStep]), ms(g_PhaseTotals[PhaseDrawLists]),
+                ms(g_PhaseTotals[PhaseRenderPrep]), ms(g_PhaseTotals[PhaseSubmit]));
+    for (u64& total : g_PhaseTotals)
+    {
+        total = 0;
+    }
+
+    g_PhaseFrames = 0;
+    g_PhasesSince = now;
+}
+}
 #endif
 
 namespace
@@ -94,6 +162,9 @@ void GameContextPrototype::StartUp()
 
 void GameContextPrototype::BeginFrame(bool)
 {
+#ifdef TWIN_NATIVE
+    PhaseTimer phase(PhaseBegin);
+#endif
     if (g_GameState == GameStatePausing)
     {
         if (G_GamePadController != nullptr)
@@ -177,6 +248,9 @@ void GameContextPrototype::BeginFrame(bool)
 
 void GameContextPrototype::UpdatePrototype(bool playingMovie)
 {
+#ifdef TWIN_NATIVE
+    PhaseTimer phase(PhaseStep);
+#endif
     bool paused = g_GameState == GameStatePaused;
     if (!playingMovie)
     {
@@ -207,6 +281,7 @@ void GameContextPrototype::UpdatePrototype(bool playingMovie)
 void GameContextPrototype::EndFrame(bool playingMovie)
 {
 #ifdef TWIN_NATIVE
+    PhaseTimer phase(PhaseDrawLists);
     // (The second player's camera only for its frames' drawing: coop/secondplayer.cpp)
     Coop::BeforeDraw();
 #endif
@@ -224,21 +299,30 @@ void GameContextPrototype::EndFrame(bool playingMovie)
 
 void GameContextPrototype::Render(bool playingMovie)
 {
-    if (!playingMovie)
     {
-        UpdateSound(g_GameState == GameStatePaused, &g_GlobalClock);
+#ifdef TWIN_NATIVE
+        PhaseTimer phase(PhaseRenderPrep);
+#endif
+        if (!playingMovie)
+        {
+            UpdateSound(g_GameState == GameStatePaused, &g_GlobalClock);
+        }
+
+        GameRender(playingMovie);
+        if (G_GameRendererController != nullptr)
+        {
+            G_GameRendererController->AfterGameRender();
+        }
+
+        if (!playingMovie)
+        {
+            BackgroundWork(true);
+        }
     }
 
-    GameRender(playingMovie);
-    if (G_GameRendererController != nullptr)
-    {
-        G_GameRendererController->AfterGameRender();
-    }
-
-    if (!playingMovie)
-    {
-        BackgroundWork(true);
-    }
+#ifdef TWIN_NATIVE
+    PhaseTimer submitPhase(PhaseSubmit);
+#endif
 
     GameRendererController* renderer = G_GameRendererController;
     if (renderer != nullptr)
@@ -269,6 +353,9 @@ void GameContextPrototype::Render(bool playingMovie)
     }
 
     DebugFrameRendered();
+#ifdef TWIN_NATIVE
+    PhasesFrameDone();
+#endif
 }
 
 void GameContextPrototype::LanguageChangedPrototype(u32)

@@ -16,10 +16,14 @@ namespace NativeUi
 namespace
 {
 std::atomic<bool> g_Shown{false};
-std::atomic<s32> g_Value{-1};
-// The presenter's thread's: the half second being counted (its start's time, -1 none) and the pictures since
-double g_From = -1.0;
-u32 g_Frames = 0;
+// Each window's own (two players: the first player's window and the second's count the pictures each shows, 2026-11-11; one
+// count for both showed their sum, the same in both windows)
+std::atomic<s32> g_Value[2] = {-1, -1};
+// The window the picture being shown goes to (the presenter's, SetCountedWindow)
+int g_Window = 0;
+// The presenter's thread's: the half second being counted (its start's time, -1 none) and the pictures since, each window's
+double g_From[2] = {-1.0, -1.0};
+u32 g_Frames[2] = {0, 0};
 constexpr double CountSeconds = 0.5;
 // Reference pixels: the margin from the window's corner, the text's size, the box's padding across and its height
 constexpr f32 Margin = 6.0f;
@@ -33,35 +37,41 @@ void SetFpsCounterShown(bool shown)
     g_Shown = shown;
 }
 
+void SetCountedWindow(int window)
+{
+    g_Window = window == 1 ? 1 : 0;
+}
+
 void CountShownFrame(double seconds)
 {
+    const int window = g_Window;
     if (!g_Shown)
     {
-        g_From = -1.0;
-        g_Value = -1;
+        g_From[0] = g_From[1] = -1.0;
+        g_Value[0] = g_Value[1] = -1;
         return;
     }
 
-    if (g_From < 0.0)
+    if (g_From[window] < 0.0)
     {
-        g_From = seconds;
-        g_Frames = 0;
+        g_From[window] = seconds;
+        g_Frames[window] = 0;
         return;
     }
 
-    g_Frames++;
-    double elapsed = seconds - g_From;
+    g_Frames[window]++;
+    double elapsed = seconds - g_From[window];
     if (elapsed >= CountSeconds)
     {
-        g_Value = static_cast<s32>(std::lround(static_cast<double>(g_Frames) / elapsed));
-        g_From = seconds;
-        g_Frames = 0;
+        g_Value[window] = static_cast<s32>(std::lround(static_cast<double>(g_Frames[window]) / elapsed));
+        g_From[window] = seconds;
+        g_Frames[window] = 0;
     }
 }
 
 s32 FpsCounterValue()
 {
-    return g_Shown ? g_Value.load() : -1;
+    return g_Shown ? g_Value[g_Window].load() : -1;
 }
 
 void AddFpsCounter(std::vector<OverlayFrame::Command>* commands, int pixelWidth, int pixelHeight)
