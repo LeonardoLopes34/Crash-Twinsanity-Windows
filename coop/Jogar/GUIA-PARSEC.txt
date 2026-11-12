@@ -77,8 +77,13 @@ CUTSCENE
 BARCO, PORTAS DE FASE E VIAGENS
 -------------------------------
 - O jogo carrega o mundo em volta do Jogador 1. Para pegar o barco (por exemplo, para o Ice Lab) ou entrar numa fase, quem
-  entra e o Jogador 1, com o Jogador 2 na mochila dele. Se o Jogador 2 for sozinho, o jogo pode ficar carregando e voltar
-  ao checkpoint.
+  entra e o Jogador 1, com o Jogador 2 na mochila dele.
+- Se o Jogador 2 subir no barco sozinho, o Jogador 1 e levado ate ele e o Jogador 2 vai para a mochila do Jogador 1
+  (antes a tela ficava preta ate voltar ao checkpoint pelo menu).
+- Filme (como o da chegada perto do Tikimon) ativado pelo Jogador 2: depois dele cada um continua onde estava (antes o
+  Jogador 2 era levado de volta para o Jogador 1).
+- Aku Aku: o jogo tem uma mascara so, que segue quem e "o jogador" naquele lugar. Com o Jogador 2 na mochila ela fica com o
+  Jogador 1 e mostra a vida dele.
 - O Jogador 1 nao e mais levado na mochila do Jogador 2 para outra area: ele sai da mochila e volta para onde entrou.
 - Fases em que o Jogador 1 vira veiculo com o Cortex (a bola na caverna, o skate): o Jogador 2 fica na mochila o tempo
   todo e as duas janelas mostram a camera do Jogador 1.

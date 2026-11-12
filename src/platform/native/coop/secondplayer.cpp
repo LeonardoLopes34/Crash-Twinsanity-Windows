@@ -1652,6 +1652,8 @@ void RetireSecond(const char* why)
 // Since when the two players have been in different areas of the map (0: they're in the same one)
 u64 g_ApartSince = 0;
 
+bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
+
 void LeashFrame()
 {
     g_Leash = 0.0f;
@@ -1735,6 +1737,21 @@ void LeashFrame()
     float dy = first->place->position.y - second->place->position.y;
     float dz = first->place->position.z - second->place->position.z;
     float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    // Far in one frame: the game moved the second player (the boat off the pier: 742 away at once). The first taken there and the
+    // second into its backpack, as a cutscene does, so the game's move goes on with the first. Pulled back into the first's backpack
+    // instead, the boat's script lost its player and the screen stayed black (2026-11-12)
+    static float lastDistance = -1.0f;
+    bool moved = lastDistance >= 0.0f && lastDistance < LimitAt && distance >= LimitAt && distance - lastDistance > 50.0f &&
+                 SDL_GetTicksNS() - g_RideChanged > 1000000000ull;
+    lastDistance = distance;
+    if (moved && PutFirstWhereSecond(first, second))
+    {
+        Native::Log("second player: moved %.1f away by the game in a frame: player 1 taken there, player 2 into its backpack", distance);
+        lastDistance = -1.0f;
+        StartRide(1);
+        return;
+    }
+
     if (distance >= LimitAt)
     {
         Native::Log("second player: too far from the first (%.1f), into the first player's backpack", distance);
@@ -1744,8 +1761,6 @@ void LeashFrame()
 
     g_Leash = distance <= WarnAt ? 0.0f : (distance - WarnAt) / (LimitAt - WarnAt);
 }
-
-bool PutFirstWhereSecond(InstanceContext* first, InstanceContext* second);
 
 void BackpackFrame()
 {
