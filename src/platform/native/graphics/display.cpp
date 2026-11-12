@@ -672,13 +672,14 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
 {
     Presenter& p = g_Presenter;
     Gl& gl = p.gl;
-    // The second player's window drawn with the same context, made current on it for this picture. Left current on the window it
-    // drew last, made current again only when the target changes (it was made current on the second window and back on the first
-    // for each of its pictures: the presents took 42% of the game's thread in the two players' profile, 2026-11-11)
+    // The second player's window drawn with the same context, made current on it for this picture and on the first again after.
+    // (Left on the window it drew last, the switch came at every picture all the same with the views alternating, and cost more:
+    // the present 3.5 ms a frame instead of 2.7, 2026-11-12. The switch is the present's cost: 1.5-3.2 ms against 0.1 for the
+    // drawing and the swap. A context of the second window's own on a thread of its own is what takes it away)
     SDL_Window* target = g_PresentTarget != nullptr ? g_PresentTarget : p.window;
     const int timedWindow = target != p.window ? 1 : 0;
     const u64 presentStart = PresentClockNow();
-    if (SDL_GL_GetCurrentWindow() != target || SDL_GL_GetCurrentContext() != p.context)
+    if (target != p.window)
     {
         SDL_GL_MakeCurrent(target, p.context);
     }
@@ -987,12 +988,16 @@ void PresentTexture(GLuint texture, f32 u0, f32 v0, f32 u1, f32 v1, u32 pictureW
     const u64 presentDrawn = PresentClockNow();
     SDL_GL_SwapWindow(target);
     const u64 presentSwapped = PresentClockNow();
+    u64 switchedBack = 0;
     if (target != p.window)
     {
         g_SecondPresented++;
+        SDL_GL_MakeCurrent(p.window, p.context);
+        switchedBack = PresentClockNow() - presentSwapped;
     }
 
-    NotePresentTimes(timedWindow, presentSwitched - presentStart, presentDrawn - presentSwitched, presentSwapped - presentDrawn);
+    NotePresentTimes(timedWindow, presentSwitched - presentStart + switchedBack, presentDrawn - presentSwitched,
+                     presentSwapped - presentDrawn);
 }
 
 void Present(const NativeGraphics::Picture& picture)
