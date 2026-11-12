@@ -121,12 +121,9 @@ bool PipWanted(int viewer);
 // the circle, the kind: 1 enemy, 2 crate, 3 wumpa, 4 other character, 5 the other player, 6 the ping; and one unused), how many,
 // and which way the view's own character faces on it (radians, 0 up). False when there's none to draw
 bool MinimapDots(int view, const float** dots, int* count, float* facing);
-// The checkpoint's wait for both players (coopgame.cpp's HoldsBody: a body setting a checkpoint, the checkpoint's instance): true to
-// hold it back while the other player isn't in its range. The game's bottom line of text (a short sentence, no accents; "" hides)
-bool CheckpointWaitHolds(InstanceContext* checkpoint);
-// The same for a body that starts a cutscene: held until both players are near each other (or one rides in the other's backpack);
-// released, the swap of "the player" is undone first so the cutscene acts on the first player
+// A body that starts a cutscene (coopgame.cpp's HoldsBody), the instance that runs it: true to hold it back (secondplayer.cpp)
 bool CutsceneWaitHolds(InstanceContext* director);
+// The game's bottom line of text (a short sentence, no accents; "" hides)
 void ShowBottomLine(const char* text);
 bool RidingHides(const ModelNode* node);
 // The second player's character drawn green (ogi.cpp's ModelNode::Draw): whether a model is its, and a light's colour made green

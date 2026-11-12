@@ -2572,40 +2572,6 @@ void FinishLead(const char* why)
 }
 }
 
-bool CheckpointWaitHolds(InstanceContext* checkpoint)
-{
-    GameController* controller = G_GameController;
-    InstanceContext* first = FirstPlayer();
-    InstanceContext* second = SecondPlayer();
-    if (!Wanted() || controller == nullptr || controller->State() != GameController::StatePlaying || first == nullptr ||
-        second == nullptr || checkpoint == nullptr || checkpoint->place == nullptr || first->place == nullptr ||
-        second->place == nullptr)
-    {
-        return false;
-    }
-
-    bool near0 = DistanceBetween(checkpoint->place, first->place) < CheckpointRange;
-    bool near1 = DistanceBetween(checkpoint->place, second->place) < CheckpointRange;
-    if (near0 && near1)
-    {
-        // Both there: it goes through now
-        EndWait();
-        Native::Log("second player: checkpoint, both players there");
-        return false;
-    }
-
-    if (g_Wait.checkpoint != checkpoint)
-    {
-        EndWait();
-        g_Wait.checkpoint = checkpoint;
-        Native::Log("second player: checkpoint waits for the other player");
-    }
-
-    g_Wait.asked = SDL_GetTicksNS();
-    g_Wait.waiter = near0 ? 0 : (near1 ? 1 : -1);
-    return true;
-}
-
 // A script body that starts a cutscene (coopgame.cpp's HoldsBody), the instance that runs it: true to hold it back until both
 // players are near each other, the player nearer the instance (who set it off) held still meanwhile; false once they are, with the
 // swap of "the player" undone so the cutscene's commands (locking the player's inputs, switching characters) act on the first

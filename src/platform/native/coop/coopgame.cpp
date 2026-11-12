@@ -2143,16 +2143,12 @@ void ShowBottomLine(const char* text)
 
 bool HoldsBody(const StateBody* body, BehaviourRunner* runner, BehaviourLevel* level)
 {
-    // Two players on this PC: a body that sets a checkpoint waits for the other player to be there too (secondplayer.cpp)
+    // Two players on this PC: a cutscene's body may be held (secondplayer.cpp). A checkpoint isn't: either player sets it (it
+    // waited for both to be there, and the second player alone never set one, 2026-11-12)
     if (body != nullptr && runner != nullptr && runner->agentNode != nullptr && SecondPlayerWanted())
     {
         for (const ScriptCommand* command = body->commands; command != nullptr; command = command->next)
         {
-            if (command->vtable == g_SetPlayerRespawnPositionCommandVTable)
-            {
-                return CheckpointWaitHolds(runner->agentNode->owner);
-            }
-
             // A cutscene starting from play waits for both players
             if (command->vtable == g_CutsceneStartCommandVTable)
             {
