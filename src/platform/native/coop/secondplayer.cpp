@@ -636,9 +636,7 @@ struct Minimap
     float facing = 0.0f;
 };
 Minimap g_Minimap[2];
-// Off to start with (2026-11-12, the players' ask, to see the frames without it: its list goes through every live instance a few
-// times a second, and with the world around both players there are more): M or the D-pad's up shows it
-bool g_MiniWanted[2] = {false, false};
+bool g_MiniWanted[2] = {true, true};
 
 struct MiniScan
 {
@@ -1326,14 +1324,7 @@ int TwoViewsFrame()
                 g_FrameCost = g_FrameCost * 0.95 + static_cast<double>(g_FrameWork) * 0.05;
             }
 
-            // (Not with the first window as fast as it goes, $TWIN_P1_FPS from 480: it never fits a budget it doesn't have, and it
-            // would be at the second's 60 for good. The second window at Parsec's 60 and the first with the rest, 2026-11-12)
-            const bool firstUnpaced = ViewRate(0) >= 480;
-            if (firstUnpaced)
-            {
-                g_Reduced = false;
-            }
-            else if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
+            if (!g_Reduced && g_FrameCost > full * 0.95 && ViewRate(0) > ViewRate(1))
             {
                 g_Reduced = true;
                 g_FitsSince = 0;
